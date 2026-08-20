@@ -4,8 +4,10 @@
 LICENSE text eol=lf
 mvnw text eol=lf
 *.example text eol=lf
-*.bat text eol=crlf
-*.cmd text eol=crlf
+# Conserver physiquement CRLF dans Git pour que les archives ZIP GitHub
+# restent directement exécutables par cmd.exe sous Windows.
+*.bat -text
+*.cmd -text
 *.java text eol=lf
 *.as text eol=lf
 *.md text eol=lf
