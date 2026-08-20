@@ -1,0 +1,11 @@
+# Copiez ce fichier sous le nom builder.properties, puis adaptez les chemins.
+# Les chemins peuvent être absolus ou relatifs au dossier du builder.
+# Utilisez / dans les chemins Windows.
+
+server.config.path=../../serveur/game/config.properties
+client.customSpells.path=../../client/resources/app/retroclient/custom_spells.json
+client.spellPatches.path=../../client/resources/app/retroclient/spell_patches.json
+
+# Valeurs proposées par défaut pendant la création d'un sort.
+template.iconSpellId=176
+template.animationSpellId=103

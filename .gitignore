@@ -1,0 +1,18 @@
+# Compilation et sauvegardes
+/build/
+/target/
+/backups/
+
+# Configuration et données d'exécution locales
+/builder.properties
+/created_spells.json
+/custom_spells.json
+/spell_patches.json
+
+# IDE et système
+/.idea/
+/.vscode/
+*.iml
+*.log
+.DS_Store
+Thumbs.db
