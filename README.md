@@ -71,16 +71,18 @@ Les chemins peuvent être absolus ou relatifs au dossier du builder. Dans un che
 
 Les identifiants et mots de passe MariaDB ne sont pas dupliqués dans `builder.properties`. Ils restent dans le `config.properties` du serveur.
 
-### Correspondance de `template.iconSpellId`
+### Choix de l'icône
 
-La valeur est un ID de sort, par exemple `176`.
+À l'étape de création, le builder propose deux sources :
 
-- Le builder vérifie que cet ID existe dans `spells.id`.
-- L'icône n'est pas stockée dans une colonne de la table `spells`.
-- Côté client, l'override appelle le texte du sort modèle et reprend sa propriété d'icône `i` avec `getSpellText(template.iconSpellId).i`.
-- L'ID doit donc également correspondre à un sort connu par les données de langue du client.
+- **Icône d'un sort existant** : un ID de sort, par exemple `176` ; le builder vérifie que ce sort existe dans `spells` puis reprend sa propriété client `i`.
+- **Icône par ID dans `clips/spells/icons/up`** : un ID de fichier tel que `673` pour `clips/spells/icons/up/673.swf`. Le builder vérifie que le fichier `<ID>.swf` existe dans le client configuré.
 
-Cette valeur est proposée par défaut pendant chaque création. L'utilisateur peut conserver ce modèle avec `Entrée` ou saisir un autre ID. Le builder vérifie l'existence du sort dans `spells`, affiche son nom et demande confirmation. L'ID finalement choisi est enregistré dans l'entrée du sort dans `custom_spells.json`.
+L'icône directe est enregistrée dans `custom_spells.json`. L'override AS2 fourni doit être republié dans `core.swf` une fois après cette mise à jour ; il reconstruit les propriétés complètes de l'icône et remplace uniquement l'ID du fichier `up`.
+
+Les sorts créés sont explicitement classés comme sorts de classe dans le client, indépendamment du sort choisi comme modèle d'icône. Les effets sans condition n'affichent pas de bouton « Conditions ».
+
+`template.iconSpellId` reste le modèle par défaut pour le premier choix et fournit les métadonnées client lorsqu'une icône directe est utilisée.
 
 ### Correspondance de `template.animationSpellId`
 
@@ -149,7 +151,7 @@ Ce mode accepte un sort vanilla ou personnalisé lié à un morph Gladiatrool. I
 - `CD` ;
 - `maxByTurn` et `maxByTarget`.
 
-Les lignes de `spells_effect`, les états, les zones, le nom, la description, l'icône et l'animation ne sont jamais modifiés par ce mode.
+Les lignes de `spells_effect`, les états, les zones, le nom et la description ne sont jamais modifiés par ce mode. L'icône peut être remplacée avec les mêmes deux sources que lors de la création. L'animation peut être copiée depuis un sort modèle ; le builder met alors à jour `spells.sprite` et `spells.spriteinfo`.
 
 Si le même ID est lié à plusieurs classes, le programme affiche toutes les classes concernées. La modification de `spells_grade` s'applique à cet ID partout où il est utilisé.
 

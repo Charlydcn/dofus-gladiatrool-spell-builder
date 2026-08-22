@@ -21,7 +21,9 @@ if (_global.dofus != undefined
                 var p = rows[i].split(",");
                 if (p.length >= 4)
                 {
-                    result.push([Number(p[0]), Number(p[1]), Number(p[2]), -1, 0, 0, p[3]]);
+                    // Ne pas renseigner l'index 6 : le client l'interprète comme
+                    // une condition d'effet et affiche sinon une aide « Conditions - ».
+                    result.push([Number(p[0]), Number(p[1]), Number(p[2]), -1, 0, 0]);
                 }
             }
             return result;
@@ -34,9 +36,10 @@ if (_global.dofus != undefined
 
             var normalEffects = this._buildCustomDamageEffects(p[15]);
             var criticalEffects = this._buildCustomDamageEffects(p[16]);
+            var effectZone = p.length >= 19 && p[18].length >= 2 ? p[18] : "Pa";
             var zones = "";
             var totalEffects = normalEffects.length + criticalEffects.length;
-            for (var z = 0; z < totalEffects; z++) zones += "Pa";
+            for (var z = 0; z < totalEffects; z++) zones += effectZone;
 
             var level = [
                 normalEffects,
@@ -65,13 +68,24 @@ if (_global.dofus != undefined
             var iconSpellID = p.length >= 18 ? Number(p[17]) : 176;
             var iconModel = this._getSpellTextBeforeCustom(iconSpellID);
             if (iconModel == undefined) return undefined;
+            // p[19] est facultatif : les anciennes entrées gardent l'icône du sort modèle.
+            var directIconID = p.length >= 20 && p[19].length > 0 ? Number(p[19]) : undefined;
+            var iconProperties = iconModel.i;
+            if (directIconID != undefined)
+            {
+                iconProperties = {};
+                for (var iconKey in iconModel.i) iconProperties[iconKey] = iconModel.i[iconKey];
+                iconProperties.up = directIconID;
+            }
 
             var text = {
                 n:unescape(p[0]),
                 d:unescape(p[1]),
-                i:iconModel.i,
-                b:iconModel.b,
-                c:iconModel.c,
+                i:iconProperties,
+                // Tous les sorts créés par le builder sont des sorts de classe.
+                // Ne pas hériter de la catégorie du sort utilisé comme modèle d'icône.
+                b:_global.API.datacenter.Player.Guild,
+                c:10,
                 t:iconModel.t,
                 o:iconModel.o,
                 p:false,
@@ -109,6 +123,23 @@ if (_global.dofus != undefined
             level[14] = Number(p[10]); // relance
             level[19] = p[11] == "1"; // EC termine le tour
             patchedText.l6 = level;
+
+            // Champs facultatifs ajoutés après les 12 paramètres historiques.
+            if (p.length >= 13 && p[12].length > 0)
+            {
+                var iconModel = this._getSpellTextBeforeCustom(Number(p[12]));
+                if (iconModel != undefined)
+                {
+                    var iconProperties = iconModel.i;
+                    if (p.length >= 14 && p[13].length > 0)
+                    {
+                        iconProperties = {};
+                        for (var iconKey in iconModel.i) iconProperties[iconKey] = iconModel.i[iconKey];
+                        iconProperties.up = Number(p[13]);
+                    }
+                    patchedText.i = iconProperties;
+                }
+            }
             return patchedText;
         };
 
@@ -161,7 +192,9 @@ if (_global.dofus != undefined
             _global.CUSTOM_SPELL_TEXT_CACHE = {};
             trace("[CUSTOM-SPELLS] données chargées");
         };
-        customSpellsLoader.load("custom_spells.json");
+        // Évite qu'une ancienne version reste dans le cache après la création
+        // d'un nouveau sort.
+        customSpellsLoader.load("custom_spells.json?cache=" + getTimer());
 
         var spellPatchesLoader = new LoadVars();
         spellPatchesLoader.onData = function(rawData)
@@ -178,7 +211,7 @@ if (_global.dofus != undefined
             _global.CUSTOM_SPELL_GRADE_PATCHES = parser._parseJsonFlat(rawData);
             trace("[CUSTOM-SPELLS] patchs de grades chargés");
         };
-        spellPatchesLoader.load("spell_patches.json");
+        spellPatchesLoader.load("spell_patches.json?cache=" + getTimer());
         trace("[CUSTOM-SPELLS] override installé");
     }
 }
