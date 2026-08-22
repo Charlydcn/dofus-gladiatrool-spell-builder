@@ -140,6 +140,11 @@ if (_global.dofus != undefined
                     patchedText.i = iconProperties;
                 }
             }
+            if (p.length >= 17 && p[14] == "1")
+            {
+                patchedText.n = unescape(p[15]);
+                patchedText.d = unescape(p[16]);
+            }
             return patchedText;
         };
 

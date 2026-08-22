@@ -824,6 +824,7 @@ public final class SpellBuilderApp {
                     "Délai de relance",
                     "Maximum par tour",
                     "Maximum par cible",
+                    "Nom et description",
                     "Icône",
                     "Animation de lancement",
                     "Terminer et enregistrer",
@@ -847,6 +848,12 @@ public final class SpellBuilderApp {
                 case 8: edited.maxPerTurn = ui.askInt("Maximum par tour actuel : " + edited.maxPerTurn, 0, 100, edited.maxPerTurn); break;
                 case 9: edited.maxPerTarget = ui.askInt("Maximum par cible actuel : " + edited.maxPerTarget, 0, 100, edited.maxPerTarget); break;
                 case 10:
+                    edited.name = ui.askText("Nom du sort", 1, 80, edited.textPatched ? edited.name : spell.name);
+                    edited.description = ui.askText("Description du sort (Entrée pour aucune description)", 0, 500,
+                            edited.description == null ? "" : edited.description);
+                    edited.textPatched = true;
+                    break;
+                case 11:
                     int iconMode = ui.select("Source de l'icône", List.of(
                             "Icône d'un sort existant (par ID de sort)",
                             "Icône par ID dans clips/spells/icons/up"
@@ -860,7 +867,7 @@ public final class SpellBuilderApp {
                         edited.directIconId = askDirectIconId();
                     }
                     break;
-                case 11:
+                case 12:
                     int animationSpellId = askTemplateSpellId(connection,
                             "ID du sort modèle pour l'animation", animationTemplateSpellId, "Animation");
                     AnimationTemplate animation = loadAnimationTemplate(connection, animationSpellId);
@@ -868,7 +875,7 @@ public final class SpellBuilderApp {
                     edited.spriteInfo = animation.spriteInfo;
                     edited.animationTemplateSpellId = animationSpellId;
                     break;
-                case 12:
+                case 13:
                     if (!ui.confirm("Enregistrer ces modifications ?", false)) break;
                     applyGradeUpdate(connection, spell, original, edited);
                     return;
@@ -898,7 +905,7 @@ public final class SpellBuilderApp {
 
     private GradeSettings loadGradeSettings(Connection connection, int spellId) throws SQLException {
         try (PreparedStatement ps = connection.prepareStatement(
-                "SELECT g.`paCost`,g.`poMin`,g.`poMax`,g.`ratioCC`,g.`ratioEC`,g.`isLine`,g.`needLOS`,g.`isPoModif`,g.`maxByTurn`,g.`maxByTarget`,g.`CD`,g.`endTurn`,s.`sprite`,s.`spriteinfo` FROM `spells_grade` g JOIN `spells` s ON s.`id`=g.`spellID` WHERE g.`spellID`=? AND g.`gradeID`=?")) {
+                "SELECT g.`paCost`,g.`poMin`,g.`poMax`,g.`ratioCC`,g.`ratioEC`,g.`isLine`,g.`needLOS`,g.`isPoModif`,g.`maxByTurn`,g.`maxByTarget`,g.`CD`,g.`endTurn`,s.`name`,s.`sprite`,s.`spriteinfo` FROM `spells_grade` g JOIN `spells` s ON s.`id`=g.`spellID` WHERE g.`spellID`=? AND g.`gradeID`=?")) {
             ps.setInt(1, spellId); ps.setInt(2, CUSTOM_GRADE);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) throw new IllegalStateException("Grade 6 introuvable pour le sort " + spellId + ".");
@@ -907,7 +914,7 @@ public final class SpellBuilderApp {
                 g.ratioCc = rs.getInt("ratioCC"); g.ratioEc = rs.getInt("ratioEC"); g.lineOnly = rs.getBoolean("isLine");
                 g.needLos = rs.getBoolean("needLOS"); g.poModifiable = rs.getBoolean("isPoModif"); g.maxPerTurn = rs.getInt("maxByTurn");
                 g.maxPerTarget = rs.getInt("maxByTarget"); g.cooldown = rs.getInt("CD"); g.ecEndsTurn = rs.getBoolean("endTurn");
-                g.sprite = rs.getInt("sprite"); g.spriteInfo = rs.getString("spriteinfo");
+                g.name = rs.getString("name"); g.sprite = rs.getInt("sprite"); g.spriteInfo = rs.getString("spriteinfo");
                 return g;
             }
         }
@@ -923,9 +930,24 @@ public final class SpellBuilderApp {
                 : g.iconTemplateSpellId != null ? "sort modèle ID " + g.iconTemplateSpellId : "inchangée";
         System.out.println("Icône            : " + icon);
         System.out.println("Animation        : " + (g.animationTemplateSpellId == null ? "actuelle" : "sort modèle ID " + g.animationTemplateSpellId));
+        if (g.textPatched) {
+            System.out.println("Nom              : " + g.name);
+            System.out.println("Description      : " + (g.description.isBlank() ? "aucune" : g.description));
+        }
     }
 
     private void loadExistingVisualPatch(GradeSettings settings) throws IOException {
+        if (Files.exists(clientDataFile) && Files.size(clientDataFile) > 0) {
+            Map<String, String> records = json.readValue(clientDataFile.toFile(), new TypeReference<Map<String, String>>() {});
+            String customRecord = records.get(String.valueOf(settings.spellId));
+            if (customRecord != null) {
+                String[] customParts = customRecord.split("\\|", -1);
+                if (customParts.length >= 2) {
+                    settings.name = decodeClientText(customParts[0]);
+                    settings.description = decodeClientText(customParts[1]);
+                }
+            }
+        }
         if (!Files.exists(clientPatchesFile) || Files.size(clientPatchesFile) == 0) return;
         Map<String, String> patches = json.readValue(clientPatchesFile.toFile(), new TypeReference<Map<String, String>>() {});
         String encoded = patches.get(String.valueOf(settings.spellId));
@@ -933,6 +955,23 @@ public final class SpellBuilderApp {
         String[] parts = encoded.split("\\|", -1);
         if (parts.length >= 13 && !parts[12].isBlank()) settings.iconTemplateSpellId = Integer.parseInt(parts[12]);
         if (parts.length >= 14 && !parts[13].isBlank()) settings.directIconId = Integer.parseInt(parts[13]);
+        if (parts.length >= 17 && "1".equals(parts[14])) {
+            settings.textPatched = true;
+            settings.name = decodeClientText(parts[15]);
+            settings.description = decodeClientText(parts[16]);
+        }
+    }
+
+    private static String decodeClientText(String encoded) {
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < encoded.length();) {
+            if (encoded.startsWith("%u", i) && i + 6 <= encoded.length()) {
+                result.append((char) Integer.parseInt(encoded.substring(i + 2, i + 6), 16)); i += 6;
+            } else if (encoded.charAt(i) == '%' && i + 3 <= encoded.length()) {
+                result.append((char) Integer.parseInt(encoded.substring(i + 1, i + 3), 16)); i += 3;
+            } else result.append(encoded.charAt(i++));
+        }
+        return result.toString();
     }
 
     private void applyGradeUpdate(Connection connection, EditableSpell spell, GradeSettings original, GradeSettings edited) throws Exception {
@@ -959,8 +998,8 @@ public final class SpellBuilderApp {
     }
 
     private void updateSpellVisuals(Connection connection, GradeSettings g) throws SQLException {
-        try (PreparedStatement ps = connection.prepareStatement("UPDATE `spells` SET `sprite`=?,`spriteinfo`=? WHERE `id`=?")) {
-            ps.setInt(1, g.sprite); ps.setString(2, g.spriteInfo); ps.setInt(3, g.spellId);
+        try (PreparedStatement ps = connection.prepareStatement("UPDATE `spells` SET `name`=?,`sprite`=?,`spriteinfo`=? WHERE `id`=?")) {
+            ps.setString(1, g.name); ps.setInt(2, g.sprite); ps.setString(3, g.spriteInfo); ps.setInt(4, g.spellId);
             if (ps.executeUpdate() != 1) throw new IllegalStateException("Animation impossible à mettre à jour pour le sort " + g.spellId + ".");
         }
     }
@@ -1450,8 +1489,8 @@ public final class SpellBuilderApp {
         int paCost, poMin, poMax, ratioCc, ratioEc, maxPerTurn, maxPerTarget, cooldown;
         int sprite;
         Integer iconTemplateSpellId, directIconId, animationTemplateSpellId;
-        String spriteInfo;
-        boolean lineOnly, needLos, poModifiable, ecEndsTurn;
+        String name, description, spriteInfo;
+        boolean lineOnly, needLos, poModifiable, ecEndsTurn, textPatched;
 
         GradeSettings copy() {
             GradeSettings copy = new GradeSettings();
@@ -1461,6 +1500,7 @@ public final class SpellBuilderApp {
             copy.poModifiable = poModifiable; copy.ecEndsTurn = ecEndsTurn;
             copy.sprite = sprite; copy.spriteInfo = spriteInfo; copy.iconTemplateSpellId = iconTemplateSpellId;
             copy.directIconId = directIconId; copy.animationTemplateSpellId = animationTemplateSpellId;
+            copy.name = name; copy.description = description; copy.textPatched = textPatched;
             return copy;
         }
 
@@ -1470,7 +1510,8 @@ public final class SpellBuilderApp {
                     poModifiable ? "1" : "0", String.valueOf(maxPerTurn), String.valueOf(maxPerTarget),
                     String.valueOf(cooldown), ecEndsTurn ? "1" : "0",
                     iconTemplateSpellId == null ? "" : String.valueOf(iconTemplateSpellId),
-                    directIconId == null ? "" : String.valueOf(directIconId));
+                    directIconId == null ? "" : String.valueOf(directIconId), textPatched ? "1" : "0",
+                    textPatched ? ClientRecord.encodeText(name) : "", textPatched ? ClientRecord.encodeText(description) : "");
         }
 
         String restoreSql() {
@@ -1479,7 +1520,7 @@ public final class SpellBuilderApp {
                     + ",`needLOS`=" + (needLos ? 1 : 0) + ",`isPoModif`=" + (poModifiable ? 1 : 0)
                     + ",`maxByTurn`=" + maxPerTurn + ",`maxByTarget`=" + maxPerTarget + ",`CD`=" + cooldown
                     + ",`endTurn`=" + (ecEndsTurn ? 1 : 0) + " WHERE `spellID`=" + spellId + " AND `gradeID`=" + CUSTOM_GRADE + ";\n"
-                    + "UPDATE `spells` SET `sprite`=" + sprite + ",`spriteinfo`=" + sqlString(spriteInfo) + " WHERE `id`=" + spellId + ";";
+                    + "UPDATE `spells` SET `name`=" + sqlString(name) + ",`sprite`=" + sprite + ",`spriteinfo`=" + sqlString(spriteInfo) + " WHERE `id`=" + spellId + ";";
         }
 
         private static String sqlString(String value) { return value == null ? "NULL" : "'" + value.replace("'", "''") + "'"; }
@@ -1519,7 +1560,7 @@ public final class SpellBuilderApp {
         private static String encodeEffects(List<DamageLine> effects) {
             return effects.stream().map(e -> e.effectId() + "," + e.min + "," + e.max + "," + diceJet(e.min, e.max)).collect(Collectors.joining(";"));
         }
-        private static String encodeText(String text) {
+        static String encodeText(String text) {
             StringBuilder out = new StringBuilder();
             for (int i = 0; i < text.length(); i++) {
                 int value = text.charAt(i);
@@ -1574,6 +1615,18 @@ public final class SpellBuilderApp {
                 System.out.print(question + " : ");
                 String value = readLine(false);
                 if (value == null) throw new UserCancelledException();
+                value = value.trim();
+                if (value.length() >= minLength && value.length() <= maxLength && !value.contains("|")) return value;
+                System.out.println("Valeur invalide : " + minLength + " à " + maxLength + " caractères, sans le caractère |.");
+            }
+        }
+
+        String askText(String question, int minLength, int maxLength, String defaultValue) {
+            while (true) {
+                System.out.print(question + " [défaut : " + (defaultValue.isEmpty() ? "vide" : defaultValue) + "] : ");
+                String value = readLine(false);
+                if (value == null) throw new UserCancelledException();
+                if (value.isEmpty()) value = defaultValue;
                 value = value.trim();
                 if (value.length() >= minLength && value.length() <= maxLength && !value.contains("|")) return value;
                 System.out.println("Valeur invalide : " + minLength + " à " + maxLength + " caractères, sans le caractère |.");

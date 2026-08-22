@@ -151,7 +151,7 @@ Ce mode accepte un sort vanilla ou personnalisé lié à un morph Gladiatrool. I
 - `CD` ;
 - `maxByTurn` et `maxByTarget`.
 
-Les lignes de `spells_effect`, les états, les zones, le nom et la description ne sont jamais modifiés par ce mode. L'icône peut être remplacée avec les mêmes deux sources que lors de la création. L'animation peut être copiée depuis un sort modèle ; le builder met alors à jour `spells.sprite` et `spells.spriteinfo`.
+Les lignes de `spells_effect`, les états et les zones ne sont jamais modifiés par ce mode. Le nom et la description peuvent être remplacés ; le builder met à jour `spells.name` et leur affichage client. L'icône peut être remplacée avec les mêmes deux sources que lors de la création. L'animation peut être copiée depuis un sort modèle ; le builder met alors à jour `spells.sprite` et `spells.spriteinfo`.
 
 Si le même ID est lié à plusieurs classes, le programme affiche toutes les classes concernées. La modification de `spells_grade` s'applique à cet ID partout où il est utilisé.
 

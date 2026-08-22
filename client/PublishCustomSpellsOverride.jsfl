@@ -37,6 +37,11 @@ else
         source = source.split('            patchedText.l6 = level;\n            return patchedText;')
                        .join('            patchedText.l6 = level;\n            if (p.length >= 13 && p[12].length > 0)\n            {\n                var iconModel = this._getSpellTextBeforeCustom(Number(p[12]));\n                if (iconModel != undefined)\n                {\n                    var iconProperties = iconModel.i;\n                    if (p.length >= 14 && p[13].length > 0)\n                    {\n                        iconProperties = {};\n                        for (var iconKey in iconModel.i) iconProperties[iconKey] = iconModel.i[iconKey];\n                        iconProperties.up = Number(p[13]);\n                    }\n                    patchedText.i = iconProperties;\n                }\n            }\n            return patchedText;');
     }
+    if (source.indexOf('patchedText.n = unescape(p[15])') < 0)
+    {
+        source = source.split('            return patchedText;\n        };')
+                       .join('            if (p.length >= 17 && p[14] == "1")\n            {\n                patchedText.n = unescape(p[15]);\n                patchedText.d = unescape(p[16]);\n            }\n            return patchedText;\n        };');
+    }
 
     frame.actionScript = source;
     doc.save();
