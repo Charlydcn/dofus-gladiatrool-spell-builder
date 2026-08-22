@@ -121,7 +121,7 @@ public final class SpellBuilderApp {
             assertCount(c, "SELECT COUNT(*) FROM `gladiatrool_spells` WHERE `spells` LIKE '%10000;6;_%'", 1);
             Map<String, String> records = json.readValue(clientDataFile.toFile(), new TypeReference<Map<String, String>>() {});
             if (!records.containsKey("10000")) throw new IllegalStateException("Donnée client 10000 absente.");
-            if (!records.get("10000").startsWith("Test%20int%u00E9gration|")) {
+            if (!records.get("10000").startsWith("Test%20int%E9gration|")) {
                 throw new IllegalStateException("Encodage Unicode du nom client incorrect.");
             }
 
@@ -1565,8 +1565,8 @@ public final class SpellBuilderApp {
             for (int i = 0; i < text.length(); i++) {
                 int value = text.charAt(i);
                 if ((value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') || (value >= '0' && value <= '9') || value == '-' || value == '_' || value == '.' || value == '~') out.append((char) value);
-                else if (value <= 0x7f) out.append('%').append(String.format("%02X", value));
-                else out.append("%u").append(String.format("%04X", value));
+                else if (value <= 0xff) out.append('%').append(String.format("%02X", value));
+                else throw new IllegalArgumentException("Caractère non pris en charge par le client Flash : " + (char) value);
             }
             return out.toString();
         }
