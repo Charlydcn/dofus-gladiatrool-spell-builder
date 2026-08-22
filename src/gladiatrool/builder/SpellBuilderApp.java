@@ -128,9 +128,13 @@ public final class SpellBuilderApp {
             GradeSettings originalGrade = loadGradeSettings(c, 10_000);
             GradeSettings modifiedGrade = originalGrade.copy();
             modifiedGrade.poMin = 2; modifiedGrade.poMax = 8; modifiedGrade.paCost = 4;
+            modifiedGrade.normalEffects.get(0).min = 7;
+            modifiedGrade.effectsEdited = true;
             updateGradeRow(c, modifiedGrade);
+            replaceEffects(c, modifiedGrade);
             updateClientPatch(modifiedGrade);
             assertCount(c, "SELECT COUNT(*) FROM `spells_grade` WHERE `spellID`=10000 AND `gradeID`=6 AND `paCost`=4 AND `poMin`=2 AND `poMax`=8", 1);
+            assertCount(c, "SELECT COUNT(*) FROM `spells_effect` WHERE `spellID`=10000 AND `gradeID`=6 AND `effectID`=91 AND `min`=7 AND `isCCeffect`=0", 1);
             Map<String, String> patches = json.readValue(clientPatchesFile.toFile(), new TypeReference<Map<String, String>>() {});
             if (!patches.containsKey("10000")) throw new IllegalStateException("Patch client 10000 absent.");
 
@@ -468,6 +472,40 @@ public final class SpellBuilderApp {
             line.max = ui.askInt("Dégâts maximum" + (critical ? " critiques" : ""), line.min, 100_000, Math.max(line.min, 5));
             target.add(line);
         } while (ui.confirm("Ajouter une autre ligne " + (critical ? "critique" : "normale") + " ?", false));
+    }
+
+    private void editEffects(List<DamageLine> effects, boolean critical) {
+        ui.title("Effets " + (critical ? "critiques" : "normaux"));
+        List<DamageLine> updated = new ArrayList<>();
+        for (int i = 0; i < effects.size(); i++) {
+            DamageLine line = effects.get(i).copy();
+            System.out.println("Ligne " + (i + 1) + " actuelle : " + line.min + " à " + line.max
+                    + " (" + line.element.label + ", " + (line.lifeSteal ? "vol de vie" : "dégâts directs") + ")");
+            if (!ui.confirm("Conserver cette ligne ?", true)) continue;
+            if (ui.confirm("Modifier l'élément ? Valeur actuelle : " + line.element.label, false)) {
+                line.element = Element.values()[ui.select("Élément de la ligne", List.of("Neutre", "Terre", "Feu", "Eau", "Air"))];
+            }
+            if (ui.confirm("Modifier le type ? Valeur actuelle : " + (line.lifeSteal ? "Vol de vie" : "Dégâts directs"), false)) {
+                line.lifeSteal = ui.select("Type de la ligne", List.of("Dégâts directs", "Vol de vie")) == 1;
+            }
+            line.min = ui.askInt("Dégâts minimum" + (critical ? " critiques" : "") + " actuels : " + line.min,
+                    0, 100_000, line.min);
+            line.max = ui.askInt("Dégâts maximum" + (critical ? " critiques" : "") + " actuels : " + line.max,
+                    line.min, 100_000, Math.max(line.min, line.max));
+            updated.add(line);
+        }
+        while (ui.confirm("Ajouter une autre ligne " + (critical ? "critique" : "normale") + " ?", false)) {
+            DamageLine line = new DamageLine();
+            int element = ui.select("Élément de la ligne", List.of("Neutre", "Terre", "Feu", "Eau", "Air"));
+            line.element = Element.values()[element];
+            line.lifeSteal = ui.select("Type de la ligne", List.of("Dégâts directs", "Vol de vie")) == 1;
+            line.min = ui.askInt("Dégâts minimum" + (critical ? " critiques" : ""), 0, 100_000, 1);
+            line.max = ui.askInt("Dégâts maximum" + (critical ? " critiques" : ""), line.min, 100_000, Math.max(line.min, 5));
+            line.effectTarget = effects.isEmpty() ? 0 : effects.get(0).effectTarget;
+            updated.add(line);
+        }
+        effects.clear();
+        effects.addAll(updated);
     }
 
     private void createSpell(Connection c, SpellDraft d, CreationSnapshot snapshot) throws SQLException {
@@ -808,7 +846,7 @@ public final class SpellBuilderApp {
         GradeSettings edited = original.copy();
 
         ui.info("Classes utilisant cet ID : " + spell.morphIds.stream().map(this::morphName).collect(Collectors.joining(", ")));
-        ui.info("La modification s'appliquera à cet ID partout où il est utilisé. Les effets ne seront pas modifiés.");
+        ui.info("La modification s'appliquera à cet ID partout où il est utilisé.");
 
         while (true) {
             ui.title("Paramètres actuels · " + spell.name + " (ID " + spell.id + ")");
@@ -827,6 +865,7 @@ public final class SpellBuilderApp {
                     "Nom et description",
                     "Icône",
                     "Animation de lancement",
+                    "Effets normaux et critiques",
                     "Terminer et enregistrer",
                     "Annuler"
             ));
@@ -876,6 +915,15 @@ public final class SpellBuilderApp {
                     edited.animationTemplateSpellId = animationSpellId;
                     break;
                 case 13:
+                    if (!edited.effectsEditable) {
+                        throw new IllegalStateException("Les effets de ce sort ne sont pas tous des dégâts ou vols de vie gérés par le builder.");
+                    }
+                    editEffects(edited.normalEffects, false);
+                    if (edited.ratioCc > 0) editEffects(edited.criticalEffects, true);
+                    else edited.criticalEffects.clear();
+                    edited.effectsEdited = true;
+                    break;
+                case 14:
                     if (!ui.confirm("Enregistrer ces modifications ?", false)) break;
                     applyGradeUpdate(connection, spell, original, edited);
                     return;
@@ -915,7 +963,29 @@ public final class SpellBuilderApp {
                 g.needLos = rs.getBoolean("needLOS"); g.poModifiable = rs.getBoolean("isPoModif"); g.maxPerTurn = rs.getInt("maxByTurn");
                 g.maxPerTarget = rs.getInt("maxByTarget"); g.cooldown = rs.getInt("CD"); g.ecEndsTurn = rs.getBoolean("endTurn");
                 g.name = rs.getString("name"); g.sprite = rs.getInt("sprite"); g.spriteInfo = rs.getString("spriteinfo");
+                loadDamageEffects(connection, g);
                 return g;
+            }
+        }
+    }
+
+    private void loadDamageEffects(Connection connection, GradeSettings settings) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT `effectID`,`min`,`max`,`isCCeffect`,`effectTarget` FROM `spells_effect` WHERE `spellID`=? AND `gradeID`=? ORDER BY `isCCeffect`,`effectID`,`min`,`max`")) {
+            ps.setInt(1, settings.spellId);
+            ps.setInt(2, CUSTOM_GRADE);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    DamageLine line = DamageLine.fromEffectId(rs.getInt("effectID"));
+                    if (line == null) {
+                        settings.effectsEditable = false;
+                        continue;
+                    }
+                    line.min = rs.getInt("min");
+                    line.max = rs.getInt("max");
+                    line.effectTarget = rs.getInt("effectTarget");
+                    (rs.getBoolean("isCCeffect") ? settings.criticalEffects : settings.normalEffects).add(line);
+                }
             }
         }
     }
@@ -930,6 +1000,8 @@ public final class SpellBuilderApp {
                 : g.iconTemplateSpellId != null ? "sort modèle ID " + g.iconTemplateSpellId : "inchangée";
         System.out.println("Icône            : " + icon);
         System.out.println("Animation        : " + (g.animationTemplateSpellId == null ? "actuelle" : "sort modèle ID " + g.animationTemplateSpellId));
+        System.out.println("Effets normaux  : " + describeEffects(g.normalEffects));
+        System.out.println("Effets critiques: " + (g.ratioCc == 0 ? "aucun" : describeEffects(g.criticalEffects)));
         if (g.textPatched) {
             System.out.println("Nom              : " + g.name);
             System.out.println("Description      : " + (g.description.isBlank() ? "aucune" : g.description));
@@ -977,14 +1049,16 @@ public final class SpellBuilderApp {
     private void applyGradeUpdate(Connection connection, EditableSpell spell, GradeSettings original, GradeSettings edited) throws Exception {
         boolean patchExisted = Files.exists(clientPatchesFile);
         byte[] patchBefore = patchExisted ? Files.readAllBytes(clientPatchesFile) : null;
-        Path backupDir = writeUpdateBackup(original, patchExisted, patchBefore);
+        Path backupDir = writeUpdateBackup(connection, original, patchExisted, patchBefore);
         try {
             updateGradeRow(connection, edited);
+            if (edited.effectsEdited) replaceEffects(connection, edited);
             updateSpellVisuals(connection, edited);
             updateClientPatch(edited);
         } catch (Exception failure) {
             try {
                 updateGradeRow(connection, original);
+                if (edited.effectsEdited) replaceEffects(connection, original);
                 updateSpellVisuals(connection, original);
                 if (patchExisted) Files.write(clientPatchesFile, patchBefore); else Files.deleteIfExists(clientPatchesFile);
             } catch (Exception rollbackFailure) { failure.addSuppressed(rollbackFailure); }
@@ -992,7 +1066,6 @@ public final class SpellBuilderApp {
         }
         ui.title("Sort modifié");
         ui.success(spell.name + " (ID " + spell.id + ")");
-        ui.info("Effets conservés sans modification.");
         ui.info("Sauvegarde : " + backupDir);
         ui.info("Redémarrer le serveur Game et le client.");
     }
@@ -1015,6 +1088,30 @@ public final class SpellBuilderApp {
         }
     }
 
+    private void replaceEffects(Connection connection, GradeSettings settings) throws SQLException {
+        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM `spells_effect` WHERE `spellID`=? AND `gradeID`=?")) {
+            delete.setInt(1, settings.spellId);
+            delete.setInt(2, CUSTOM_GRADE);
+            delete.executeUpdate();
+        }
+        insertUpdatedEffects(connection, settings.spellId, settings.normalEffects, false);
+        insertUpdatedEffects(connection, settings.spellId, settings.criticalEffects, true);
+    }
+
+    private void insertUpdatedEffects(Connection connection, int spellId, List<DamageLine> effects, boolean critical) throws SQLException {
+        if (effects.isEmpty()) return;
+        String sql = "INSERT INTO `spells_effect` (`spellID`,`gradeID`,`effectID`,`min`,`max`,`args`,`area`,`chance`,`turn`,`isCCeffect`,`jet`,`effectTarget`,`trigger`,`onHitTrigger`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            for (DamageLine effect : effects) {
+                ps.setInt(1, spellId); ps.setInt(2, CUSTOM_GRADE); ps.setInt(3, effect.effectId());
+                ps.setInt(4, effect.min); ps.setInt(5, effect.max); ps.setInt(6, -1); ps.setString(7, "Pa");
+                ps.setInt(8, 0); ps.setInt(9, 0); ps.setBoolean(10, critical); ps.setString(11, diceJet(effect.min, effect.max));
+                ps.setInt(12, effect.effectTarget); ps.setInt(13, -1); ps.setInt(14, -1); ps.addBatch();
+            }
+            ps.executeBatch();
+        }
+    }
+
     private void updateClientPatch(GradeSettings g) throws IOException {
         Files.createDirectories(clientPatchesFile.getParent());
         Map<String, String> patches = new TreeMap<>(Comparator.comparingInt(Integer::parseInt));
@@ -1027,12 +1124,15 @@ public final class SpellBuilderApp {
         Files.move(temp, clientPatchesFile, StandardCopyOption.REPLACE_EXISTING);
     }
 
-    private Path writeUpdateBackup(GradeSettings original, boolean patchExisted, byte[] patchBefore) throws IOException {
+    private Path writeUpdateBackup(Connection connection, GradeSettings original, boolean patchExisted, byte[] patchBefore) throws IOException, SQLException {
         String stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
         Path dir = backupRoot.resolve(stamp + "-update-spell-" + original.spellId);
         Files.createDirectories(dir);
-        String sql = "-- Restauration avant modification du sort " + original.spellId + "\n" + original.restoreSql() + "\n";
-        Files.writeString(dir.resolve("restore.sql"), sql, StandardCharsets.UTF_8);
+        StringBuilder sql = new StringBuilder("-- Restauration avant modification du sort ").append(original.spellId).append("\n");
+        sql.append("DELETE FROM `spells_effect` WHERE `spellID`=").append(original.spellId).append(";\n");
+        sql.append(original.restoreSql()).append("\n");
+        appendInsertRows(connection, sql, "spells_effect", "spellID", original.spellId);
+        Files.writeString(dir.resolve("restore.sql"), sql.toString(), StandardCharsets.UTF_8);
         if (patchExisted) Files.write(dir.resolve("spell_patches.json.before"), patchBefore);
         else Files.writeString(dir.resolve("spell_patches.json.before"), "{}\n", StandardCharsets.UTF_8);
         return dir;
@@ -1419,7 +1519,22 @@ public final class SpellBuilderApp {
         boolean lifeSteal;
         int min;
         int max;
+        int effectTarget;
         int effectId() { return lifeSteal ? element.lifeStealEffect : element.damageEffect; }
+        DamageLine copy() {
+            DamageLine copy = new DamageLine();
+            copy.element = element; copy.lifeSteal = lifeSteal; copy.min = min; copy.max = max; copy.effectTarget = effectTarget;
+            return copy;
+        }
+        static DamageLine fromEffectId(int effectId) {
+            for (Element element : Element.values()) {
+                DamageLine line = new DamageLine();
+                line.element = element;
+                if (effectId == element.damageEffect) return line;
+                if (effectId == element.lifeStealEffect) { line.lifeSteal = true; return line; }
+            }
+            return null;
+        }
     }
 
     private static final class SpellDraft {
@@ -1490,7 +1605,9 @@ public final class SpellBuilderApp {
         int sprite;
         Integer iconTemplateSpellId, directIconId, animationTemplateSpellId;
         String name, description, spriteInfo;
-        boolean lineOnly, needLos, poModifiable, ecEndsTurn, textPatched;
+        boolean lineOnly, needLos, poModifiable, ecEndsTurn, textPatched, effectsEditable = true, effectsEdited;
+        final List<DamageLine> normalEffects = new ArrayList<>();
+        final List<DamageLine> criticalEffects = new ArrayList<>();
 
         GradeSettings copy() {
             GradeSettings copy = new GradeSettings();
@@ -1501,6 +1618,9 @@ public final class SpellBuilderApp {
             copy.sprite = sprite; copy.spriteInfo = spriteInfo; copy.iconTemplateSpellId = iconTemplateSpellId;
             copy.directIconId = directIconId; copy.animationTemplateSpellId = animationTemplateSpellId;
             copy.name = name; copy.description = description; copy.textPatched = textPatched;
+            copy.effectsEditable = effectsEditable; copy.effectsEdited = effectsEdited;
+            for (DamageLine effect : normalEffects) copy.normalEffects.add(effect.copy());
+            for (DamageLine effect : criticalEffects) copy.criticalEffects.add(effect.copy());
             return copy;
         }
 
