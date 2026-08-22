@@ -29,6 +29,30 @@ if (_global.dofus != undefined
             return result;
         };
 
+        CustomSpellTranslator.prototype._decodeCustomText = function(encoded)
+        {
+            var result = "";
+            for (var i = 0; i < encoded.length; i++)
+            {
+                if (encoded.charAt(i) == "%" && encoded.charAt(i + 1) == "u" && i + 5 < encoded.length)
+                {
+                    result += String.fromCharCode(parseInt(encoded.substr(i + 2, 4), 16));
+                    i += 5;
+                }
+                else if (encoded.charAt(i) == "%" && i + 2 < encoded.length)
+                {
+                    var byteValue = parseInt(encoded.substr(i + 1, 2), 16);
+                    var windows1252Bytes = [128,130,131,132,133,134,135,136,137,138,139,140,142,145,146,147,148,149,150,151,152,153,154,155,156,158,159];
+                    var windows1252Chars = [8364,8218,402,8222,8230,8224,8225,710,8240,352,8249,338,381,8216,8217,8220,8221,8226,8211,8212,732,8482,353,8250,339,382,376];
+                    for (var w = 0; w < windows1252Bytes.length; w++) if (windows1252Bytes[w] == byteValue) byteValue = windows1252Chars[w];
+                    result += String.fromCharCode(byteValue);
+                    i += 2;
+                }
+                else result += encoded.charAt(i);
+            }
+            return result;
+        };
+
         CustomSpellTranslator.prototype._buildCustomSpellText = function(spellID, encoded)
         {
             var p = encoded.split("|");
@@ -79,13 +103,13 @@ if (_global.dofus != undefined
             }
 
             var text = {
-                n:unescape(p[0]),
-                d:unescape(p[1]),
+                n:this._decodeCustomText(p[0]),
+                d:this._decodeCustomText(p[1]),
                 i:iconProperties,
                 // Tous les sorts créés par le builder sont des sorts de classe.
                 // Ne pas hériter de la catégorie du sort utilisé comme modèle d'icône.
                 b:p.length >= 21 && Number(p[20]) > 0 ? Number(p[20]) : _global.API.datacenter.Player.Guild,
-                c:10,
+                c:1,
                 t:iconModel.t,
                 o:iconModel.o,
                 p:false,
@@ -142,8 +166,8 @@ if (_global.dofus != undefined
             }
             if (p.length >= 17 && p[14] == "1")
             {
-                patchedText.n = unescape(p[15]);
-                patchedText.d = unescape(p[16]);
+                patchedText.n = this._decodeCustomText(p[15]);
+                patchedText.d = this._decodeCustomText(p[16]);
             }
             return patchedText;
         };
