@@ -24,6 +24,8 @@ else
                    .join('result.push([Number(p[0]), Number(p[1]), Number(p[2]), -1, 0, 0]);');
     source = source.split('                b:iconModel.b,\n                c:iconModel.c,')
                    .join('                b:_global.API.datacenter.Player.Guild,\n                c:10,');
+    source = source.split('                b:_global.API.datacenter.Player.Guild,\n                c:10,')
+                   .join('                b:p.length >= 21 && Number(p[20]) > 0 ? Number(p[20]) : _global.API.datacenter.Player.Guild,\n                c:10,');
 
     if (source.indexOf('var directIconID = p.length >= 20') < 0)
     {

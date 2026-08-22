@@ -1554,8 +1554,14 @@ public final class SpellBuilderApp {
                     String.valueOf(d.ratioCc), String.valueOf(d.ratioEc), bool(d.lineOnly), bool(d.needLos), bool(d.poModifiable),
                     String.valueOf(classId), String.valueOf(d.maxPerTurn), String.valueOf(d.maxPerTarget), String.valueOf(d.cooldown),
                     bool(d.ecEndsTurn), encodeEffects(d.normalEffects), encodeEffects(d.criticalEffects), String.valueOf(d.iconTemplateSpellId),
-                    "", d.directIconId == null ? "" : String.valueOf(d.directIconId)
+                    "", d.directIconId == null ? "" : String.valueOf(d.directIconId), String.valueOf(clientBreedId(d))
             );
+        }
+        private static int clientBreedId(SpellDraft d) {
+            if (d.global || d.morphIds.size() != 1) return 0;
+            int morphId = d.morphIds.get(0);
+            for (int i = 0; i < GLADIATROOL_MORPHS.length; i++) if (GLADIATROOL_MORPHS[i] == morphId) return i + 1;
+            return 0;
         }
         private static String encodeEffects(List<DamageLine> effects) {
             return effects.stream().map(e -> e.effectId() + "," + e.min + "," + e.max + "," + diceJet(e.min, e.max)).collect(Collectors.joining(";"));

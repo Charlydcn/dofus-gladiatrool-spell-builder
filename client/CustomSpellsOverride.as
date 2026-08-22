@@ -84,7 +84,7 @@ if (_global.dofus != undefined
                 i:iconProperties,
                 // Tous les sorts créés par le builder sont des sorts de classe.
                 // Ne pas hériter de la catégorie du sort utilisé comme modèle d'icône.
-                b:_global.API.datacenter.Player.Guild,
+                b:p.length >= 21 && Number(p[20]) > 0 ? Number(p[20]) : _global.API.datacenter.Player.Guild,
                 c:10,
                 t:iconModel.t,
                 o:iconModel.o,
