@@ -124,6 +124,10 @@ public final class SpellBuilderApp {
             if (!records.get("10000").startsWith("Test%20int%E9gration|")) {
                 throw new IllegalStateException("Encodage Unicode du nom client incorrect.");
             }
+            String[] clientFields = records.get("10000").split("\\|", -1);
+            if (clientFields.length < 11 || !"0".equals(clientFields[10])) {
+                throw new IllegalStateException("Le sort personnalisé n'est pas classé comme sort de classe.");
+            }
 
             GradeSettings originalGrade = loadGradeSettings(c, 10_000);
             GradeSettings modifiedGrade = originalGrade.copy();
@@ -1032,6 +1036,11 @@ public final class SpellBuilderApp {
             settings.name = decodeClientText(parts[15]);
             settings.description = decodeClientText(parts[16]);
         }
+        if (parts.length >= 20) {
+            settings.clientNormalEffects = parts[17];
+            settings.clientCriticalEffects = parts[18];
+            settings.clientEffectZones = parts[19];
+        }
     }
 
     private static String decodeClientText(String encoded) {
@@ -1605,6 +1614,7 @@ public final class SpellBuilderApp {
         int sprite;
         Integer iconTemplateSpellId, directIconId, animationTemplateSpellId;
         String name, description, spriteInfo;
+        String clientNormalEffects = "", clientCriticalEffects = "", clientEffectZones = "";
         boolean lineOnly, needLos, poModifiable, ecEndsTurn, textPatched, effectsEditable = true, effectsEdited;
         final List<DamageLine> normalEffects = new ArrayList<>();
         final List<DamageLine> criticalEffects = new ArrayList<>();
@@ -1618,6 +1628,8 @@ public final class SpellBuilderApp {
             copy.sprite = sprite; copy.spriteInfo = spriteInfo; copy.iconTemplateSpellId = iconTemplateSpellId;
             copy.directIconId = directIconId; copy.animationTemplateSpellId = animationTemplateSpellId;
             copy.name = name; copy.description = description; copy.textPatched = textPatched;
+            copy.clientNormalEffects = clientNormalEffects; copy.clientCriticalEffects = clientCriticalEffects;
+            copy.clientEffectZones = clientEffectZones;
             copy.effectsEditable = effectsEditable; copy.effectsEdited = effectsEdited;
             for (DamageLine effect : normalEffects) copy.normalEffects.add(effect.copy());
             for (DamageLine effect : criticalEffects) copy.criticalEffects.add(effect.copy());
@@ -1631,7 +1643,8 @@ public final class SpellBuilderApp {
                     String.valueOf(cooldown), ecEndsTurn ? "1" : "0",
                     iconTemplateSpellId == null ? "" : String.valueOf(iconTemplateSpellId),
                     directIconId == null ? "" : String.valueOf(directIconId), textPatched ? "1" : "0",
-                    textPatched ? ClientRecord.encodeText(name) : "", textPatched ? ClientRecord.encodeText(description) : "");
+                    textPatched ? ClientRecord.encodeText(name) : "", textPatched ? ClientRecord.encodeText(description) : "",
+                    clientNormalEffects, clientCriticalEffects, clientEffectZones);
         }
 
         String restoreSql() {
@@ -1668,7 +1681,9 @@ public final class SpellBuilderApp {
 
     private static final class ClientRecord {
         static String encode(SpellDraft d) {
-            int classId = d.normalEffects.isEmpty() ? 0 : d.normalEffects.get(0).element.clientClassId;
+            // L'index 11 du niveau client est le filtre du livre de sorts.
+            // Les sorts créés par le builder sont des sorts de classe, quel que soit leur élément.
+            int classId = 0;
             return join(
                     encodeText(d.name), encodeText(d.description), String.valueOf(d.paCost), String.valueOf(d.poMin), String.valueOf(d.poMax),
                     String.valueOf(d.ratioCc), String.valueOf(d.ratioEc), bool(d.lineOnly), bool(d.needLos), bool(d.poModifiable),

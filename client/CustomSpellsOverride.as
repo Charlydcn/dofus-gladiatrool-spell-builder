@@ -21,9 +21,17 @@ if (_global.dofus != undefined
                 var p = rows[i].split(",");
                 if (p.length >= 4)
                 {
+                    var param1 = Number(p[1]);
+                    var param2 = Number(p[2]);
+                    var remainingTurns = p.length >= 5 && p[4].length > 0 ? Number(p[4]) : 0;
+
                     // Ne pas renseigner l'index 6 : le client l'interprète comme
                     // une condition d'effet et affiche sinon une aide « Conditions - ».
-                    result.push([Number(p[0]), Number(p[1]), Number(p[2]), -1, 0, 0]);
+                    // Les jets fixes conservent max=-1 et le jet 0d0+N, comme
+                    // le coup critique de Mot Interdit (sort 125).
+                    var effect = [Number(p[0]), param1, param2, -1, remainingTurns, 0];
+                    effect[7] = this._decodeCustomText(p[3]);
+                    result.push(effect);
                 }
             }
             return result;
@@ -52,6 +60,38 @@ if (_global.dofus != undefined
             }
             return result;
         };
+
+        // Textes purement client des mécaniques Sram qui n'existent pas dans
+        // le fichier de langue vanilla. La logique reste intégralement serveur.
+        if (CustomSpellTranslator.prototype._getEffectTextBeforeCustomSram == undefined)
+        {
+            CustomSpellTranslator.prototype._getEffectTextBeforeCustomSram = CustomSpellTranslator.prototype.getEffectText;
+            CustomSpellTranslator.prototype.getEffectText = function(effectID)
+            {
+                switch (Number(effectID))
+                {
+                    case 2130:
+                    case 31000: return {d:"Rend le personnage intaclable",t:true};
+                    case 31001: return {d:"Augmente de 3 les dommages des pièges suivants",t:true};
+                    case 31003: return {d:"Téléporte derrière la cible",t:true};
+                    case 31005: return {d:"Échange de place avec le Double ciblé",t:true};
+                    case 31006: return {d:"Double les dommages si la cible possède moins de la moitié de ses PV",t:true};
+                    case 31007: return {d:"Attire de 2 cases vers le centre du piège",t:true};
+                }
+                return this._getEffectTextBeforeCustomSram(effectID);
+            };
+        }
+
+        // Couleurs réservées aux pièges personnalisés.
+        if (_global.dofus.Constants != undefined)
+        {
+            var customZoneColors = _global.dofus.Constants.ZONE_COLOR;
+            if (customZoneColors != undefined)
+            {
+                customZoneColors[62] = 0x3B82F6; // Piège attractif : bleu cyan.
+                customZoneColors[63] = 0x638038; // Pièges Air : vert.
+            }
+        }
 
         CustomSpellTranslator.prototype._buildCustomSpellText = function(spellID, encoded)
         {
@@ -146,6 +186,24 @@ if (_global.dofus != undefined
             level[13] = Number(p[9]); // maximum par cible
             level[14] = Number(p[10]); // relance
             level[19] = p[11] == "1"; // EC termine le tour
+
+            // Effets client facultatifs des sorts vanilla modifiés.
+            if (p.length >= 20 && p[17].length > 0)
+            {
+                var patchedNormalEffects = this._buildCustomDamageEffects(p[17]);
+                var patchedCriticalEffects = this._buildCustomDamageEffects(p[18]);
+                level[0] = patchedNormalEffects;
+                level[1] = patchedCriticalEffects;
+                var patchedEffectCount = patchedNormalEffects.length + patchedCriticalEffects.length;
+                var patchedZones = p[19];
+                if (patchedZones.length < patchedEffectCount * 2)
+                {
+                    var repeatedZone = patchedZones.length >= 2 ? patchedZones.substr(0,2) : "Pa";
+                    patchedZones = "";
+                    for (var patchedZoneIndex = 0; patchedZoneIndex < patchedEffectCount; patchedZoneIndex++) patchedZones += repeatedZone;
+                }
+                level[15] = patchedZones;
+            }
             patchedText.l6 = level;
 
             // Champs facultatifs ajoutés après les 12 paramètres historiques.
@@ -194,6 +252,94 @@ if (_global.dofus != undefined
             var patch = patches == undefined ? undefined : patches[String(spellID)];
             return this._applyCustomGradePatch(spellText, patch);
         };
+
+        // Hallucination : le client ne permet de sélectionner que les Doubles
+        // invoqués par le Sram local. Le serveur conserve la validation finale.
+        if (_global.dofus.managers != undefined
+            && _global.dofus.managers.SpellsManager != undefined
+            && _global.dofus.managers.SpellsManager.prototype._checkCanLaunchSpellOnCellBeforeHallucination == undefined)
+        {
+            var CustomSpellManager = _global.dofus.managers.SpellsManager;
+            CustomSpellManager.prototype._checkCanLaunchSpellOnCellBeforeHallucination = CustomSpellManager.prototype.checkCanLaunchSpellOnCell;
+            CustomSpellManager.prototype.checkCanLaunchSpellOnCell = function(mapHandler, oSpell, cellToData, rangeModerator, bSkipRangeCheck)
+            {
+                var canLaunch = this._checkCanLaunchSpellOnCellBeforeHallucination(mapHandler,oSpell,cellToData,rangeModerator,bSkipRangeCheck);
+                if (!canLaunch || oSpell.ID != 10001) return canLaunch;
+                var targetID = cellToData.spriteOnID;
+                if (targetID == undefined || !this.api.datacenter.Player.summonedCreaturesID[targetID]) return false;
+                var target = this.api.datacenter.Sprites.getItemAt(targetID);
+                return target instanceof _global.dofus.datacenter.Character;
+            };
+        }
+
+        // Fourvoiement : complète l'aperçu natif du Sram par une croix de
+        // rayon 1 autour de chacun de ses Doubles.
+        if (_global.dofus.managers != undefined
+            && _global.dofus.managers.GameManager != undefined
+            && _global.dofus.managers.GameManager.prototype._switchToSpellLaunchBeforeSramEcho == undefined)
+        {
+            var CustomGameManager = _global.dofus.managers.GameManager;
+            CustomGameManager.prototype._switchToSpellLaunchBeforeSramEcho = CustomGameManager.prototype.switchToSpellLaunch;
+            CustomGameManager.prototype.switchToSpellLaunch = function(oSpell, bSpell, bForced)
+            {
+                var result = this._switchToSpellLaunchBeforeSramEcho(oSpell,bSpell,bForced);
+                if (oSpell == undefined || Number(oSpell.ID) != 68
+                    || this.api.datacenter.Player.currentUseObject != oSpell)
+                    return result;
+
+                var summons = this.api.datacenter.Player.summonedCreaturesID;
+                for (var summonID in summons)
+                {
+                    if (summons[summonID] != true) continue;
+                    var summon = this.api.datacenter.Sprites.getItemAt(summonID);
+                    if (summon instanceof _global.dofus.datacenter.Character)
+                    {
+                        this.api.gfx.addPointerShape(
+                            "X",1,dofus.Constants.CELL_SPELL_EFFECT_COLOR,summon.cellNum
+                        );
+                    }
+                }
+                return result;
+            };
+        }
+
+        // L'effet visuel de Fourvoiement peut remettre le sprite local à 100 %
+        // d'opacité. On restaure uniquement son rendu si l'état client indique
+        // qu'il est toujours invisible ; aucun état de combat n'est modifié.
+        if (_global.dofus.aks != undefined
+            && _global.dofus.aks.extend != undefined
+            && _global.dofus.aks.extend.GameActionsEx != undefined
+            && _global.dofus.aks.extend.GameActionsEx.prototype._onActionExBeforeSramInvisibility == undefined)
+        {
+            var CustomGameActionsEx = _global.dofus.aks.extend.GameActionsEx;
+            CustomGameActionsEx.prototype._onActionExBeforeSramInvisibility = CustomGameActionsEx.prototype.onActionEx;
+            CustomGameActionsEx.prototype._restoreSramInvisibilityAfterFourvoiement = function(senderID)
+            {
+                this._sramInvisibilityRestoreTimeout = undefined;
+                var sprite = this.api.datacenter.Sprites.getItemAt(senderID);
+                if (sprite != undefined && sprite.isInvisibleInFight)
+                {
+                    sprite.mc.setVisible(true);
+                    sprite.mc.setAlpha(40);
+                }
+            };
+            CustomGameActionsEx.prototype.onActionEx = function(sExtraData, nActionType, sSenderID, oSeq, sParams, oContext)
+            {
+                var result = this._onActionExBeforeSramInvisibility.apply(this,arguments);
+                var actionParams = String(sParams).split(",");
+                if (Number(nActionType) == 300
+                    && Number(actionParams[0]) == 68
+                    && String(sSenderID) == String(this.api.datacenter.Player.ID))
+                {
+                    if (this._sramInvisibilityRestoreTimeout != undefined)
+                        _global.clearTimeout(this._sramInvisibilityRestoreTimeout);
+                    this._sramInvisibilityRestoreTimeout = _global.setTimeout(
+                        this,"_restoreSramInvisibilityAfterFourvoiement",800,sSenderID
+                    );
+                }
+                return result;
+            };
+        }
 
         _global.CUSTOM_SPELL_RECORDS = {};
         _global.CUSTOM_SPELL_GRADE_PATCHES = {};
