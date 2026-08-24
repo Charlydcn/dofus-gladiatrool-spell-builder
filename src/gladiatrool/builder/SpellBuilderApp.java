@@ -104,9 +104,9 @@ public final class SpellBuilderApp {
             for (int morph : GLADIATROOL_MORPHS) d.morphIds.add(morph);
             d.paCost = 3; d.poMin = 1; d.poMax = 6; d.ratioCc = 40; d.ratioEc = 100;
             d.poModifiable = true; d.needLos = true; d.targetMask = 1;
-            DamageLine normalFire = new DamageLine(); normalFire.element = Element.FIRE; normalFire.min = 5; normalFire.max = 10;
+            DamageLine normalFire = new DamageLine(); normalFire.element = Element.FIRE; normalFire.min = 5; normalFire.max = 5;
             DamageLine normalWaterSteal = new DamageLine(); normalWaterSteal.element = Element.WATER; normalWaterSteal.lifeSteal = true; normalWaterSteal.min = 2; normalWaterSteal.max = 4;
-            DamageLine criticalAir = new DamageLine(); criticalAir.element = Element.AIR; criticalAir.min = 12; criticalAir.max = 18;
+            DamageLine criticalAir = new DamageLine(); criticalAir.element = Element.AIR; criticalAir.min = 12; criticalAir.max = 12;
             d.normalEffects.add(normalFire); d.normalEffects.add(normalWaterSteal); d.criticalEffects.add(criticalAir);
 
             CreationSnapshot snapshot = captureSnapshot(c, d);
@@ -117,6 +117,8 @@ public final class SpellBuilderApp {
             assertCount(c, "SELECT COUNT(*) FROM `spells` WHERE `id`=10000", 1);
             assertCount(c, "SELECT COUNT(*) FROM `spells_grade` WHERE `spellID`=10000 AND `gradeID`=6", 1);
             assertCount(c, "SELECT COUNT(*) FROM `spells_effect` WHERE `spellID`=10000", 3);
+            assertCount(c, "SELECT COUNT(*) FROM `spells_effect` WHERE `spellID`=10000 AND `effectID`=99 AND `min`=5 AND `max`=-1 AND `jet`='0d0+5' AND `isCCeffect`=0", 1);
+            assertCount(c, "SELECT COUNT(*) FROM `spells_effect` WHERE `spellID`=10000 AND `effectID`=98 AND `min`=12 AND `max`=-1 AND `jet`='0d0+12' AND `isCCeffect`=1", 1);
             assertCount(c, "SELECT COUNT(*) FROM `full_morphs` WHERE `spells` LIKE '%10000;6;_%'", 12);
             assertCount(c, "SELECT COUNT(*) FROM `gladiatrool_spells` WHERE `spells` LIKE '%10000;6;_%'", 1);
             Map<String, String> records = json.readValue(clientDataFile.toFile(), new TypeReference<Map<String, String>>() {});
@@ -128,19 +130,24 @@ public final class SpellBuilderApp {
             if (clientFields.length < 11 || !"0".equals(clientFields[10])) {
                 throw new IllegalStateException("Le sort personnalisé n'est pas classé comme sort de classe.");
             }
+            if (!clientFields[15].contains("99,5,-1,0d0+5") || !clientFields[16].contains("98,12,-1,0d0+12")) {
+                throw new IllegalStateException("Encodage client des valeurs fixes incorrect.");
+            }
 
             GradeSettings originalGrade = loadGradeSettings(c, 10_000);
             GradeSettings modifiedGrade = originalGrade.copy();
             modifiedGrade.poMin = 2; modifiedGrade.poMax = 8; modifiedGrade.paCost = 4;
             modifiedGrade.normalEffects.get(0).min = 7;
+            modifiedGrade.normalEffects.get(0).max = 7;
             modifiedGrade.effectsEdited = true;
             updateGradeRow(c, modifiedGrade);
             replaceEffects(c, modifiedGrade);
             updateClientPatch(modifiedGrade);
             assertCount(c, "SELECT COUNT(*) FROM `spells_grade` WHERE `spellID`=10000 AND `gradeID`=6 AND `paCost`=4 AND `poMin`=2 AND `poMax`=8", 1);
-            assertCount(c, "SELECT COUNT(*) FROM `spells_effect` WHERE `spellID`=10000 AND `gradeID`=6 AND `effectID`=91 AND `min`=7 AND `isCCeffect`=0", 1);
+            assertCount(c, "SELECT COUNT(*) FROM `spells_effect` WHERE `spellID`=10000 AND `gradeID`=6 AND `effectID`=91 AND `min`=7 AND `max`=-1 AND `jet`='0d0+7' AND `isCCeffect`=0", 1);
             Map<String, String> patches = json.readValue(clientPatchesFile.toFile(), new TypeReference<Map<String, String>>() {});
             if (!patches.containsKey("10000")) throw new IllegalStateException("Patch client 10000 absent.");
+            if (!patches.get("10000").contains("91,7,-1,0d0+7")) throw new IllegalStateException("Patch client des valeurs fixes incorrect.");
 
             CreatedSpellRecord created = discoverCreatedSpells(c).get("10000");
             if (created == null || !created.global) throw new IllegalStateException("Registre de suppression incomplet.");
@@ -382,7 +389,7 @@ public final class SpellBuilderApp {
         }
         for (int i = 0; i < effects.size(); i++) {
             DamageLine effect = effects.get(i);
-            System.out.println("Ligne " + type + " " + (i + 1) + " : " + effect.min + " à " + effect.max
+            System.out.println("Ligne " + type + " " + (i + 1) + " : " + displayValue(effect)
                     + " (" + effect.element.label + ", " + (effect.lifeSteal ? "vol de vie" : "dégâts directs") + ")");
         }
     }
@@ -483,7 +490,7 @@ public final class SpellBuilderApp {
         List<DamageLine> updated = new ArrayList<>();
         for (int i = 0; i < effects.size(); i++) {
             DamageLine line = effects.get(i).copy();
-            System.out.println("Ligne " + (i + 1) + " actuelle : " + line.min + " à " + line.max
+            System.out.println("Ligne " + (i + 1) + " actuelle : " + displayValue(line)
                     + " (" + line.element.label + ", " + (line.lifeSteal ? "vol de vie" : "dégâts directs") + ")");
             if (!ui.confirm("Conserver cette ligne ?", true)) continue;
             if (ui.confirm("Modifier l'élément ? Valeur actuelle : " + line.element.label, false)) {
@@ -551,7 +558,7 @@ public final class SpellBuilderApp {
                 ps.setInt(2, CUSTOM_GRADE);
                 ps.setInt(3, effect.effectId());
                 ps.setInt(4, effect.min);
-                ps.setInt(5, effect.max);
+                ps.setInt(5, storedMax(effect));
                 ps.setInt(6, -1);
                 ps.setString(7, "Pa");
                 ps.setInt(8, 0);
@@ -986,7 +993,8 @@ public final class SpellBuilderApp {
                         continue;
                     }
                     line.min = rs.getInt("min");
-                    line.max = rs.getInt("max");
+                    int persistedMax = rs.getInt("max");
+                    line.max = persistedMax == -1 ? line.min : persistedMax;
                     line.effectTarget = rs.getInt("effectTarget");
                     (rs.getBoolean("isCCeffect") ? settings.criticalEffects : settings.normalEffects).add(line);
                 }
@@ -1113,7 +1121,7 @@ public final class SpellBuilderApp {
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             for (DamageLine effect : effects) {
                 ps.setInt(1, spellId); ps.setInt(2, CUSTOM_GRADE); ps.setInt(3, effect.effectId());
-                ps.setInt(4, effect.min); ps.setInt(5, effect.max); ps.setInt(6, -1); ps.setString(7, "Pa");
+                ps.setInt(4, effect.min); ps.setInt(5, storedMax(effect)); ps.setInt(6, -1); ps.setString(7, "Pa");
                 ps.setInt(8, 0); ps.setInt(9, 0); ps.setBoolean(10, critical); ps.setString(11, diceJet(effect.min, effect.max));
                 ps.setInt(12, effect.effectTarget); ps.setInt(13, -1); ps.setInt(14, -1); ps.addBatch();
             }
@@ -1449,7 +1457,7 @@ public final class SpellBuilderApp {
     }
 
     private String describeEffects(List<DamageLine> effects) {
-        return effects.stream().map(e -> (e.lifeSteal ? "vol " : "") + e.element.label + " " + e.min + "–" + e.max).collect(Collectors.joining(" + "));
+        return effects.stream().map(e -> (e.lifeSteal ? "vol " : "") + e.element.label + " " + displayValue(e)).collect(Collectors.joining(" + "));
     }
 
     private void loadBuilderPaths() throws IOException {
@@ -1506,6 +1514,16 @@ public final class SpellBuilderApp {
         if (max <= min) return "0d0+" + min;
         int faces = max - min + 1;
         return "1d" + faces + "+" + (min - 1);
+    }
+
+    // Convention Dofus : un jet fixe est stocké avec max=-1 et 0d0+min.
+    // En mémoire, le builder garde max=min pour que son interface reste simple.
+    private static int storedMax(DamageLine effect) {
+        return effect.max == effect.min ? -1 : effect.max;
+    }
+
+    private static String displayValue(DamageLine effect) {
+        return effect.min == effect.max ? String.valueOf(effect.min) : effect.min + " à " + effect.max;
     }
 
     private enum Element {
@@ -1637,6 +1655,8 @@ public final class SpellBuilderApp {
         }
 
         String encode() {
+            String encodedNormalEffects = effectsEdited ? ClientRecord.encodeEffects(normalEffects) : clientNormalEffects;
+            String encodedCriticalEffects = effectsEdited ? ClientRecord.encodeEffects(criticalEffects) : clientCriticalEffects;
             return String.join("|", String.valueOf(paCost), String.valueOf(poMin), String.valueOf(poMax),
                     String.valueOf(ratioCc), String.valueOf(ratioEc), lineOnly ? "1" : "0", needLos ? "1" : "0",
                     poModifiable ? "1" : "0", String.valueOf(maxPerTurn), String.valueOf(maxPerTarget),
@@ -1644,7 +1664,7 @@ public final class SpellBuilderApp {
                     iconTemplateSpellId == null ? "" : String.valueOf(iconTemplateSpellId),
                     directIconId == null ? "" : String.valueOf(directIconId), textPatched ? "1" : "0",
                     textPatched ? ClientRecord.encodeText(name) : "", textPatched ? ClientRecord.encodeText(description) : "",
-                    clientNormalEffects, clientCriticalEffects, clientEffectZones);
+                    encodedNormalEffects, encodedCriticalEffects, clientEffectZones);
         }
 
         String restoreSql() {
@@ -1699,7 +1719,7 @@ public final class SpellBuilderApp {
             return 0;
         }
         private static String encodeEffects(List<DamageLine> effects) {
-            return effects.stream().map(e -> e.effectId() + "," + e.min + "," + e.max + "," + diceJet(e.min, e.max)).collect(Collectors.joining(";"));
+            return effects.stream().map(e -> e.effectId() + "," + e.min + "," + storedMax(e) + "," + diceJet(e.min, e.max)).collect(Collectors.joining(";"));
         }
         static String encodeText(String text) {
             StringBuilder out = new StringBuilder();

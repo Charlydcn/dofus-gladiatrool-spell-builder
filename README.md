@@ -157,6 +157,22 @@ Si le même ID est lié à plusieurs classes, le programme affiche toutes les cl
 
 Le fichier `spell_patches.json` surcharge uniquement l'affichage client du grade 6 avec les nouvelles valeurs. Les effets et les données visuelles vanilla restent intacts.
 
+### Valeurs fixes
+
+Une ligne est fixe lorsque sa valeur minimale est égale à sa valeur maximale. Le builder
+doit conserver cette égalité dans son interface, mais écrire la convention Dofus suivante
+dans SQL et dans les JSON client :
+
+```text
+min = N
+max = -1
+jet = 0d0+N
+```
+
+L'override AS2 de `core.js` transforme ce `max=-1` en `undefined` dans le tableau d'effet
+client. Cette absence de borne est indispensable : `Number(-1)` affiche `N à -1`, tandis
+que `max=N` affiche `N à N`. Ne jamais remplacer `-1` par `N` pour contourner ce problème.
+
 ## Suppression d'un sort personnalisé
 
 Le programme demande :

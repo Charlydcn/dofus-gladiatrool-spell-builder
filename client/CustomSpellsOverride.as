@@ -22,7 +22,7 @@ if (_global.dofus != undefined
                 if (p.length >= 4)
                 {
                     var param1 = Number(p[1]);
-                    var param2 = Number(p[2]);
+                    var param2 = p[2] == "-1" || p[2].length == 0 ? undefined : Number(p[2]);
                     var remainingTurns = p.length >= 5 && p[4].length > 0 ? Number(p[4]) : 0;
 
                     // Ne pas renseigner l'index 6 : le client l'interprète comme
@@ -77,6 +77,7 @@ if (_global.dofus != undefined
                     case 31005: return {d:"Échange de place avec le Double ciblé",t:true};
                     case 31006: return {d:"Double les dommages si la cible possède moins de la moitié de ses PV",t:true};
                     case 31007: return {d:"Attire de 2 cases vers le centre du piège",t:true};
+                    case 31008: return {d:"Vole #1 aux coups critiques (#3 tours)",t:true};
                 }
                 return this._getEffectTextBeforeCustomSram(effectID);
             };
