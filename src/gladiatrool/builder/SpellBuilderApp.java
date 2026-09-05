@@ -326,11 +326,16 @@ public final class SpellBuilderApp {
         }
         Path configFile = builderDirectory.resolve("builder.properties");
         Properties p = loadProperties(configFile);
-        OperationDeliveryService delivery = new OperationDeliveryService(repository, builderConfig.remote(), builderConfig.branch(),
+        OperationDeliveryService delivery = new OperationDeliveryService(repository, builderDirectory, builderConfig.remote(), builderConfig.branch(),
                 p.getProperty("server.workflowRepository", "Charlydcn/PROJET-DOFUS-RETRO"),
                 p.getProperty("server.migrationWorkflow", "aegnor-control.yml"), p.getProperty("client.publishWorkflow", "publish-client.yml"), operationManager);
         OperationDeliveryService.DeliveryResult result = delivery.deliver(operation, repository);
-        ui.info("Commit : OK · Push : OK");
+        ui.info("Commit dépôt principal : " + operation.manifest().steps.getOrDefault("commit", "NON"));
+        ui.info("Push dépôt principal : " + operation.manifest().steps.getOrDefault("push", "NON"));
+        if (operation.manifest().stagedFiles.stream().anyMatch(path -> path.endsWith("created_spells.json"))) {
+            ui.info("Commit registre builder : " + operation.manifest().steps.getOrDefault("registreCommit", "NON"));
+            ui.info("Push registre builder : " + operation.manifest().steps.getOrDefault("registrePush", "NON"));
+        }
         ui.info("Migration serveur : " + (result.migration == null ? operation.manifest().steps.getOrDefault("migrationServeur", "NON EXECUTÉE") : result.migration.success ? "OK" : "ÉCHEC"));
         ui.info("Publication client : " + (result.publication == null ? (operation.manifest().clientPublication ? operation.manifest().steps.getOrDefault("publicationClient", "NON EXECUTÉE") : "non prévue") : result.publication.success ? "OK" : "ÉCHEC"));
         ui.info("Test en jeu : NON VALIDÉ");
