@@ -1650,7 +1650,7 @@ public final class SpellBuilderApp {
                 @Override
                 public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
                     String name = dir.getFileName() == null ? "" : dir.getFileName().toString().toLowerCase(Locale.ROOT);
-                    return Set.of(".git", "target", "build", "node_modules", "operations", "backups").contains(name)
+                    return Set.of(".git", "target", "build", "node_modules", "operations", "backups", "__macosx", "kit", "dump", "dumps").contains(name)
                             ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
                 }
 
@@ -1659,7 +1659,9 @@ public final class SpellBuilderApp {
                     String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
                     if (!(name.endsWith(".java") || name.endsWith(".sql") || name.endsWith(".json"))) return FileVisitResult.CONTINUE;
                     try {
-                        Matcher matcher = pattern.matcher(Files.readString(file));
+                        // La recherche porte uniquement sur des nombres ASCII. Une lecture
+                        // ISO-8859-1 evite de bloquer sur les anciens dumps SQL non UTF-8.
+                        Matcher matcher = pattern.matcher(new String(Files.readAllBytes(file), StandardCharsets.ISO_8859_1));
                         while (matcher.find()) addCustomId(matcher.group(1), ids);
                     } catch (IOException e) {
                         throw new IllegalStateException("Analyse du dépôt impossible : " + file, e);
