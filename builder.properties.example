@@ -14,9 +14,9 @@ icon.emptyTemplate.path=../../client/resources/app/retroclient/clips/spells/icon
 
 server.migrationWorkflow=aegnor-control.yml
 client.publishWorkflow=publish-client.yml
-client.releaseVersion=2026.08.28.1
+client.releaseVersion=2026.09.05.2
 server.workflowRepository=Charlydcn/PROJET-DOFUS-RETRO
-server.environment=Aegnor
+server.environment=DEV_LOCAL
 operation.directory=operations
 backup.directory=backups
 

@@ -10,6 +10,12 @@ Les sélections courtes utilisent les flèches `↑` / `↓` et `Entrée`. Les v
 
 Le projet cible la structure SQL de l'émulateur Aegnor. Une adaptation peut être nécessaire pour les forks ayant renommé les tables, les colonnes ou les clés de `config.properties`.
 
+Le Builder travaille dans l’environnement `DEV_LOCAL` lorsque
+`server.config.path` pointe vers le serveur du dépôt. Il ne faut pas confondre
+cette base avec `PROD_AEGNOR`, qui peut également utiliser `127.0.0.1` sur le PC
+principal. Le Builder doit afficher l’environnement et la base ciblée avant
+toute confirmation d’écriture.
+
 ## Prérequis
 
 - serveur Aegnor avec la structure MariaDB attendue ;
@@ -58,6 +64,9 @@ template.animationSpellId=103
 ```
 
 Les chemins peuvent être absolus ou relatifs au dossier du builder. Dans un chemin Windows, utiliser `/` afin d'éviter l'échappement des antislashs dans un fichier Java `.properties`.
+
+Le nom de base, l’hôte et le port doivent être consignés dans le manifeste de
+l’opération. Les mots de passe ne doivent jamais être affichés.
 
 ### Valeurs configurables
 
@@ -200,7 +209,7 @@ Ces fichiers sont mis à jour automatiquement. Ils ne doivent pas être édités
 
 `builder.properties`, `created_spells.json`, les sauvegardes et les fichiers compilés sont exclus du dépôt par `.gitignore`.
 
-La publication client réutilise par défaut la Release `client-2026.08.28.1` et remplace ses fichiers (`manifest.json`, `client-update.zip` et `Launcher.exe`). Le builder refuse de publier si cette Release n'existe pas, afin de ne pas créer automatiquement une nouvelle version. Pour changer de Release volontairement, modifier `client.releaseVersion` au format `AAAA.MM.JJ.N`.
+La publication client réutilise par défaut la Release `client-2026.09.05.2` et remplace ses fichiers (`manifest.json`, `client-update.zip` et `Dofus.exe`). Le builder refuse de publier si cette Release n'existe pas, afin de ne pas créer automatiquement une nouvelle version. Pour changer de Release volontairement, modifier `client.releaseVersion` au format `AAAA.MM.JJ.N`.
 
 ## Sauvegardes et restauration
 
@@ -218,6 +227,10 @@ Une ancienne sauvegarde ne doit pas être restaurée aveuglément après plusieu
 3. Entrer dans le Gladiatrool.
 4. Vérifier les caractéristiques et le comportement du sort.
 5. Placer manuellement un nouveau sort dans un raccourci si nécessaire.
+
+Une opération locale ne modifie que `DEV_LOCAL` et les fichiers de travail. Une
+opération distante reste une étape distincte ; la présence de la migration dans
+Git ne signifie pas qu’elle a été appliquée à `PROD_AEGNOR`.
 
 ## Pipeline d'opération
 

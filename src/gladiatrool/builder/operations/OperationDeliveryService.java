@@ -75,8 +75,8 @@ public final class OperationDeliveryService {
             }
             progress.accept("Étape 6/8 · mise à jour de la Release existante " + tag + "...");
             publication=workflows.runAndWait(publishWorkflow,"version",clientReleaseVersion);
-            progress.accept("Étape 7/8 · vérification de manifest.json, client-update.zip et Launcher.exe...");
-            boolean assets=publication.success && workflows.releaseContainsAssets(tag,"manifest.json","client-update.zip","Launcher.exe");
+            progress.accept("Étape 7/8 · vérification de manifest.json, client-update.zip et Dofus.exe...");
+            boolean assets=publication.success && workflows.releaseContainsAssets(tag,"manifest.json","client-update.zip","Dofus.exe");
             m.steps.put("publicationClient",assets?"OK":publication.success?"ARTEFACTS_INCOMPLETS":"ECHEC");
             if(!assets)m.status="PUBLICATION_FAILED";else m.status="COMPLETED"; operations.save(operation);
             progress.accept("Étape 7/8 · publication client " + (assets ? "réussie" : "incomplète") + ".");

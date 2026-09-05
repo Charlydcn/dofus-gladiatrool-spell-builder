@@ -219,6 +219,11 @@ public final class SpellBuilderApp {
         registryFile = builderDirectory.resolve("created_spells.json");
 
         ui.title("Générateur de sorts Gladiatrool");
+        String environment = builderConfig.value("server.environment", "INCONNU");
+        ui.info("Environnement déclaré : " + environment);
+        if (!"DEV_LOCAL".equalsIgnoreCase(environment)) {
+            throw new IllegalStateException("Le Spell Builder doit être configuré sur DEV_LOCAL avant toute écriture locale.");
+        }
         ui.info("Grade 6 uniquement · IDs 10000–10999 · dégâts directs et vol de vie");
             int mode = ui.select("Action", List.of(
                     "Créer un sort",
@@ -297,6 +302,10 @@ public final class SpellBuilderApp {
         System.out.println("Sauvegarde        : " + operation.manifest().backupDirectory);
         if (!ui.confirm("Appliquer les fichiers préparés au dépôt local ?", false)) throw new UserCancelledException();
         new PreparedOperationService(operationManager).apply(operation, repository);
+        applyLocalMigration(repository, migrationName);
+        operation.manifest().steps.put("migrationDevLocal", "OK");
+        operation.manifest().steps.put("redemarrageDevLocal", "A_FAIRE");
+        operationManager.save(operation);
         ClientValidator localClient = new ClientValidator();
         localClient.validateJson(clientDataFile); localClient.validateJson(clientPatchesFile); localClient.validateRecord(clientDataFile, draft.id); localClient.validateDirectIcon(clientDataFile, draft.id); localClient.validateSwf(clientIconDirectory.resolve(draft.id + ".swf"));
         if (emptyIconTemplate) {
@@ -310,7 +319,8 @@ public final class SpellBuilderApp {
             operation.manifest().steps.put("iconeGraphique", copiedHash.equals(editedHash) ? "INCHANGE_CONFIRME" : "MODIFIE");
             operationManager.save(operation);
         }
-        ui.success("Source locale : OK · JSON : OK · SWF : OK · migration prête");
+        ui.success("DEV_LOCAL : migration appliquée · Source : OK · JSON : OK · SWF : OK");
+        ui.info("Redémarrez le Game DEV_LOCAL avant le test en jeu.");
         if (ui.confirm("Autoriser le commit, le push, la migration serveur et la publication client ?", false)) {
             deliverOperation(operation, repository);
         } else {
@@ -338,8 +348,29 @@ public final class SpellBuilderApp {
             ui.info("Push registre builder : " + operation.manifest().steps.getOrDefault("registrePush", "NON"));
         }
         ui.info("Migration serveur : " + (result.migration == null ? operation.manifest().steps.getOrDefault("migrationServeur", "NON EXECUTÉE") : result.migration.success ? "OK" : "ÉCHEC"));
+        ui.info("Migration DEV_LOCAL : " + operation.manifest().steps.getOrDefault("migrationDevLocal", "NON EXECUTÉE"));
+        ui.info("Redémarrage Game DEV_LOCAL : " + operation.manifest().steps.getOrDefault("redemarrageDevLocal", "A_FAIRE"));
         ui.info("Publication client : " + (result.publication == null ? (operation.manifest().clientPublication ? operation.manifest().steps.getOrDefault("publicationClient", "NON EXECUTÉE") : "non prévue") : result.publication.success ? "OK" : "ÉCHEC"));
         ui.info("Test en jeu : NON VALIDÉ");
+    }
+
+    private void applyLocalMigration(Path repository, String migrationName) throws Exception {
+        String environment = builderConfig.value("server.environment", "INCONNU");
+        if (!"DEV_LOCAL".equalsIgnoreCase(environment)) {
+            throw new IllegalStateException("Migration locale refusée hors de DEV_LOCAL.");
+        }
+        Path script = repository.resolve("outils/dev-environment/migrate-dev.ps1").toAbsolutePath().normalize();
+        if (!Files.isRegularFile(script)) {
+            throw new IllegalStateException("Script de migration DEV_LOCAL introuvable : " + script);
+        }
+        List<String> command = List.of("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script.toString(),
+                "-Migration", migrationName, "-ConfigPath", gameConfig.toAbsolutePath().normalize().toString(), "-AllowLocalWrite");
+        ui.info("Application de la migration à DEV_LOCAL...");
+        Process process = new ProcessBuilder(command).inheritIO().start();
+        int exitCode = process.waitFor();
+        if (exitCode != 0) {
+            throw new IllegalStateException("Migration DEV_LOCAL échouée (code " + exitCode + ").");
+        }
     }
 
     private void printOperationContext(gladiatrool.builder.domain.OperationManifest manifest) {
@@ -1284,9 +1315,14 @@ public final class SpellBuilderApp {
         ui.info("Sauvegarde : " + operation.manifest().backupDirectory);
         if (!ui.confirm("Appliquer les fichiers préparés au dépôt local ?", false)) throw new UserCancelledException();
         new PreparedOperationService(operationManager).apply(operation, repository);
+        applyLocalMigration(repository, migrationName);
+        operation.manifest().steps.put("migrationDevLocal", "OK");
+        operation.manifest().steps.put("redemarrageDevLocal", "A_FAIRE");
+        operationManager.save(operation);
         if (clientChanged) new ClientValidator().validateJson(clientPatchesFile);
         if (files.containsKey(clientIconDirectory.resolve(edited.spellId + ".swf"))) new ClientValidator().validateSwf(clientIconDirectory.resolve(edited.spellId + ".swf"));
-        ui.success("Source locale : OK · JSON : " + (clientChanged ? "OK" : "non modifié"));
+        ui.success("DEV_LOCAL : migration appliquée · Source : OK · JSON : " + (clientChanged ? "OK" : "non modifié"));
+        ui.info("Redémarrez le Game DEV_LOCAL avant le test en jeu.");
         if (ui.confirm("Autoriser le commit, le push et la migration serveur" + (clientChanged ? " avec publication client" : "") + " ?", false)) deliverOperation(operation, repository);
         else ui.info("Opération conservée pour reprise : " + operation.directory());
     }
@@ -1425,7 +1461,12 @@ public final class SpellBuilderApp {
         ui.info("SWF dédié : " + (deletions.isEmpty() ? "conservé (partagé ou absent)" : "suppression prévue")); ui.info("Publication client : oui"); ui.info("Sauvegarde : " + operation.manifest().backupDirectory);
         if (!ui.confirm("Appliquer les fichiers préparés au dépôt local ?", false)) throw new UserCancelledException();
         new PreparedOperationService(operationManager).apply(operation, builderConfig.repository());
+        applyLocalMigration(builderConfig.repository(), migrationName);
+        operation.manifest().steps.put("migrationDevLocal", "OK");
+        operation.manifest().steps.put("redemarrageDevLocal", "A_FAIRE");
+        operationManager.save(operation);
         new ClientValidator().validateJson(clientDataFile); new ClientValidator().validateJson(clientPatchesFile);
+        ui.info("Redémarrez le Game DEV_LOCAL avant le test en jeu.");
         if (ui.confirm("Autoriser le commit, le push, la migration serveur et la publication client ?", false)) deliverOperation(operation, builderConfig.repository());
         else ui.info("Opération conservée pour reprise : " + operation.directory());
     }
@@ -1814,6 +1855,13 @@ public final class SpellBuilderApp {
             OperationManager.PreparedOperation operation = operationManager.load(manifests.get(selected));
             if ("READY_FOR_CONFIRMATION".equals(operation.manifest().status) && ui.confirm("Appliquer les fichiers préparés au dépôt local ?", false)) {
                 new PreparedOperationService(operationManager).apply(operation, builderConfig.repository());
+                if (!"OK".equals(operation.manifest().steps.get("migrationDevLocal"))) {
+                    applyLocalMigration(builderConfig.repository(), operation.manifest().migrationFile);
+                    operation.manifest().steps.put("migrationDevLocal", "OK");
+                    operation.manifest().steps.put("redemarrageDevLocal", "A_FAIRE");
+                    operationManager.save(operation);
+                    ui.info("Redémarrez le Game DEV_LOCAL avant le test en jeu.");
+                }
             }
             if (!"COMPLETED".equals(operation.manifest().status) && !"CANCELLED".equals(operation.manifest().status)
                     && ui.confirm("Autoriser le commit, le push et les opérations distantes de cette reprise ?", false)) {
