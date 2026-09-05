@@ -200,6 +200,8 @@ Ces fichiers sont mis à jour automatiquement. Ils ne doivent pas être édités
 
 `builder.properties`, `created_spells.json`, les sauvegardes et les fichiers compilés sont exclus du dépôt par `.gitignore`.
 
+La publication client réutilise par défaut la Release `client-2026.08.28.1` et remplace ses fichiers (`manifest.json`, `client-update.zip` et `Launcher.exe`). Le builder refuse de publier si cette Release n'existe pas, afin de ne pas créer automatiquement une nouvelle version. Pour changer de Release volontairement, modifier `client.releaseVersion` au format `AAAA.MM.JJ.N`.
+
 ## Sauvegardes et restauration
 
 Avant chaque création, modification ou suppression, le programme crée une sauvegarde ciblée dans `backups/`.

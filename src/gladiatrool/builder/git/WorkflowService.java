@@ -38,6 +38,14 @@ public final class WorkflowService {
         String json=execute(List.of("gh","release","view",tag,"--repo",repositorySlug,"--json","assets")).output;
         JsonNode root=mapper.readTree(json); java.util.Set<String> names=new java.util.HashSet<>(); for(JsonNode asset:root.path("assets")) names.add(asset.path("name").asText()); for(String name:required) if(!names.contains(name)) return false; return true;
     }
+    public boolean releaseExists(String tag) throws IOException {
+        try {
+            execute(List.of("gh", "release", "view", tag, "--repo", repositorySlug, "--json", "tagName"));
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
     private Result execute(List<String> command) throws IOException { Process p=new ProcessBuilder(command).directory(repository.toFile()).redirectErrorStream(true).start(); String out=new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8); try { int code=p.waitFor(); if(code!=0) throw new IOException("Workflow echoue : " + out.trim()); return new Result(out); } catch(InterruptedException e){Thread.currentThread().interrupt();throw new IOException("Workflow interrompu",e);} }
     private static void sleep(long millis) throws IOException { try { Thread.sleep(millis); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("Attente workflow interrompue",e); } }
     public static final class WorkflowResult { public final String runId,status,conclusion,url; public final boolean success; WorkflowResult(String id,String s,String c,String u,boolean ok){runId=id;status=s;conclusion=c;url=u;success=ok;} }

@@ -6,7 +6,6 @@ import gladiatrool.builder.git.WorkflowService;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -21,10 +20,11 @@ public final class OperationDeliveryService {
     private final String branch;
     private final String migrationWorkflow;
     private final String publishWorkflow;
+    private final String clientReleaseVersion;
     private final OperationManager operations;
     private final Consumer<String> progress;
-    public OperationDeliveryService(Path repository, Path builderRepository, String remote, String branch, String repositorySlug, String migrationWorkflow, String publishWorkflow, OperationManager operations, Consumer<String> progress) {
-        this.git=new GitService(repository); this.builderRepository=builderRepository.toAbsolutePath().normalize(); this.builderGit=new GitService(this.builderRepository); this.workflows=new WorkflowService(repository,repositorySlug,progress); this.remote=remote;this.branch=branch;this.migrationWorkflow=migrationWorkflow;this.publishWorkflow=publishWorkflow;this.operations=operations;this.progress=progress == null ? message -> {} : progress;
+    public OperationDeliveryService(Path repository, Path builderRepository, String remote, String branch, String repositorySlug, String migrationWorkflow, String publishWorkflow, String clientReleaseVersion, OperationManager operations, Consumer<String> progress) {
+        this.git=new GitService(repository); this.builderRepository=builderRepository.toAbsolutePath().normalize(); this.builderGit=new GitService(this.builderRepository); this.workflows=new WorkflowService(repository,repositorySlug,progress); this.remote=remote;this.branch=branch;this.migrationWorkflow=migrationWorkflow;this.publishWorkflow=publishWorkflow;this.clientReleaseVersion=clientReleaseVersion == null ? "" : clientReleaseVersion.trim();this.operations=operations;this.progress=progress == null ? message -> {} : progress;
     }
     public DeliveryResult deliver(OperationManager.PreparedOperation operation, Path repository) throws IOException {
         OperationManifest m=operation.manifest(); List<Path> files=new ArrayList<>(); for(String relative:m.stagedFiles)files.add(repository.resolve(relative)); for(String relative:m.deletedFiles)files.add(repository.resolve(relative));
@@ -65,11 +65,18 @@ public final class OperationDeliveryService {
         } else progress.accept("Étape 5/8 · migration serveur déjà validée.");
         WorkflowService.WorkflowResult publication=null;
         if(m.clientPublication && !"OK".equals(m.steps.get("publicationClient"))){
-            String version=LocalDate.now().toString().replace('-','.')+".1";
-            progress.accept("Étape 6/8 · déclenchement de la publication client " + version + "...");
-            publication=workflows.runAndWait(publishWorkflow,"version",version);
+            if (!clientReleaseVersion.matches("\\d{4}\\.\\d{2}\\.\\d{2}\\.\\d+")) {
+                throw new IllegalStateException("Version client invalide : " + clientReleaseVersion + " (format attendu : AAAA.MM.JJ.N)");
+            }
+            String tag="client-"+clientReleaseVersion;
+            progress.accept("Étape 6/8 · vérification de la Release client " + tag + "...");
+            if (!workflows.releaseExists(tag)) {
+                throw new IllegalStateException("Release client introuvable : " + tag + ". Aucune nouvelle Release ne sera créée.");
+            }
+            progress.accept("Étape 6/8 · mise à jour de la Release existante " + tag + "...");
+            publication=workflows.runAndWait(publishWorkflow,"version",clientReleaseVersion);
             progress.accept("Étape 7/8 · vérification de manifest.json, client-update.zip et Launcher.exe...");
-            boolean assets=publication.success && workflows.releaseContainsAssets("client-"+version,"manifest.json","client-update.zip","Launcher.exe");
+            boolean assets=publication.success && workflows.releaseContainsAssets(tag,"manifest.json","client-update.zip","Launcher.exe");
             m.steps.put("publicationClient",assets?"OK":publication.success?"ARTEFACTS_INCOMPLETS":"ECHEC");
             if(!assets)m.status="PUBLICATION_FAILED";else m.status="COMPLETED"; operations.save(operation);
             progress.accept("Étape 7/8 · publication client " + (assets ? "réussie" : "incomplète") + ".");

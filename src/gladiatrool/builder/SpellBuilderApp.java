@@ -328,7 +328,8 @@ public final class SpellBuilderApp {
         Properties p = loadProperties(configFile);
         OperationDeliveryService delivery = new OperationDeliveryService(repository, builderDirectory, builderConfig.remote(), builderConfig.branch(),
                 p.getProperty("server.workflowRepository", "Charlydcn/PROJET-DOFUS-RETRO"),
-                p.getProperty("server.migrationWorkflow", "aegnor-control.yml"), p.getProperty("client.publishWorkflow", "publish-client.yml"), operationManager, ui::info);
+                p.getProperty("server.migrationWorkflow", "aegnor-control.yml"), p.getProperty("client.publishWorkflow", "publish-client.yml"),
+                p.getProperty("client.releaseVersion", "2026.08.28.1"), operationManager, ui::info);
         OperationDeliveryService.DeliveryResult result = delivery.deliver(operation, repository);
         ui.info("Commit dépôt principal : " + operation.manifest().steps.getOrDefault("commit", "NON"));
         ui.info("Push dépôt principal : " + operation.manifest().steps.getOrDefault("push", "NON"));
