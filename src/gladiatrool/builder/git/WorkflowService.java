@@ -9,25 +9,29 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Consumer;
 
 /** Declenche et attend GitHub Actions via gh, sans afficher de secret. */
 public final class WorkflowService {
     private final Path repository;
     private final String repositorySlug;
+    private final Consumer<String> progress;
     private final ObjectMapper mapper = new ObjectMapper();
-    public WorkflowService(Path repository, String repositorySlug) { this.repository=repository; this.repositorySlug=repositorySlug; }
+    public WorkflowService(Path repository, String repositorySlug, Consumer<String> progress) { this.repository=repository; this.repositorySlug=repositorySlug; this.progress=progress == null ? message -> {} : progress; }
 
     public WorkflowResult runAndWait(String workflow, String... fields) throws IOException {
         List<String> dispatch = new ArrayList<>(Arrays.asList("gh", "workflow", "run", workflow, "--repo", repositorySlug));
         for (int i=0;i+1<fields.length;i+=2) { dispatch.add("-f"); dispatch.add(fields[i] + "=" + fields[i+1]); }
+        progress.accept("Workflow " + workflow + " · déclenchement...");
         execute(dispatch);
         String runId = null; String status = "queued"; String conclusion = null; String url = null;
         for (int attempts=0; attempts<180; attempts++) {
             String json = execute(List.of("gh", "run", "list", "--workflow", workflow, "--repo", repositorySlug, "--limit", "1", "--json", "databaseId,status,conclusion,url")).output;
             JsonNode rows = mapper.readTree(json);
-            if (rows.isArray() && rows.size() > 0) { JsonNode row=rows.get(0); runId=row.path("databaseId").asText(); status=row.path("status").asText(); conclusion=row.path("conclusion").isNull()?null:row.path("conclusion").asText(); url=row.path("url").asText(); if ("completed".equalsIgnoreCase(status)) return new WorkflowResult(runId, status, conclusion, url, "success".equalsIgnoreCase(conclusion)); }
+            if (rows.isArray() && rows.size() > 0) { JsonNode row=rows.get(0); runId=row.path("databaseId").asText(); status=row.path("status").asText(); conclusion=row.path("conclusion").isNull()?null:row.path("conclusion").asText(); url=row.path("url").asText(); if (attempts == 0 || attempts % 10 == 0) progress.accept("Workflow " + workflow + " · attente · statut=" + status + (runId.isBlank() ? "" : " · run=" + runId)); if ("completed".equalsIgnoreCase(status)) { progress.accept("Workflow " + workflow + " · terminé · conclusion=" + conclusion); return new WorkflowResult(runId, status, conclusion, url, "success".equalsIgnoreCase(conclusion)); } }
             sleep(1000);
         }
+        progress.accept("Workflow " + workflow + " · délai d'attente dépassé");
         return new WorkflowResult(runId, status, conclusion, url, false);
     }
     public boolean releaseContainsAssets(String tag, String... required) throws IOException {
