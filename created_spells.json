@@ -1,4 +1,31 @@
 {
+  "10000" : {
+    "id" : 10000,
+    "name" : "Embuscade",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ 104 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10001" : {
+    "id" : 10001,
+    "name" : "Hallucination",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ 104 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10002" : {
+    "id" : 10002,
+    "name" : "Piège attractif",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ 104 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
   "10003" : {
     "id" : 10003,
     "name" : "Uchronie",
@@ -17,12 +44,129 @@
     "morphReplacements" : { },
     "layoutReplacements" : { }
   },
-  "10025" : {
-    "id" : 10025,
-    "name" : "Test builder V2",
+  "10005" : {
+    "id" : 10005,
+    "name" : "Piège de dérive",
     "global" : false,
-    "replacementMetadataAvailable" : true,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10006" : {
+    "id" : 10006,
+    "name" : "Bosquet",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ 110 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10011" : {
+    "id" : 10011,
+    "name" : "Jet de terre",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10014" : {
+    "id" : 10014,
+    "name" : "Glyphe aqueuse",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ 101 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10015" : {
+    "id" : 10015,
+    "name" : "Déluge",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ 101 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10016" : {
+    "id" : 10016,
+    "name" : "Goutte",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ 101 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10017" : {
+    "id" : 10017,
+    "name" : "Glyphe aqueuse (effet)",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10018" : {
+    "id" : 10018,
+    "name" : "Goutte (effet)",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10019" : {
+    "id" : 10019,
+    "name" : "Tornade répulsive",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
     "morphIds" : [ 108 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10020" : {
+    "id" : 10020,
+    "name" : "Tumulte",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ 108 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10021" : {
+    "id" : 10021,
+    "name" : "Plaie Ardente",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ 108 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10022" : {
+    "id" : 10022,
+    "name" : "Posture de combat",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ 108 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10023" : {
+    "id" : 10023,
+    "name" : "Étourdissement",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ 108 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10024" : {
+    "id" : 10024,
+    "name" : "Piège miroir",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ 104 ],
     "morphReplacements" : { },
     "layoutReplacements" : { }
   }
