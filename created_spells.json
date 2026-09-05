@@ -1,0 +1,20 @@
+{
+  "10003" : {
+    "id" : 10003,
+    "name" : "Uchronie",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ 105 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  },
+  "10004" : {
+    "id" : 10004,
+    "name" : "Saut dans le temps",
+    "global" : false,
+    "replacementMetadataAvailable" : false,
+    "morphIds" : [ 105 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
+  }
+}

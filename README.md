@@ -217,6 +217,51 @@ Une ancienne sauvegarde ne doit pas être restaurée aveuglément après plusieu
 4. Vérifier les caractéristiques et le comportement du sort.
 5. Placer manuellement un nouveau sort dans un raccourci si nécessaire.
 
+## Pipeline d'opération
+
+Le builder prépare chaque action dans `operations/<operationId>/staged` et ne
+modifie le dépôt qu'après confirmation locale. Le manifeste `operation.json`
+trace séparément le dépôt, la branche, la base, l'environnement, les fichiers,
+les hashes, la migration, la sauvegarde et l'état de chaque étape.
+
+Le menu principal propose également la reprise et la consultation des opérations
+interrompues. Une opération SQL seule ne déclenche pas la publication client.
+Une opération qui modifie un JSON ou un SWF la déclenche seulement après une
+confirmation distincte.
+
+La livraison distante est toujours séquencée ainsi : commit explicite des seuls
+fichiers préparés, push, workflow `aegnor-control.yml` avec la migration, puis
+workflow `publish-client.yml` si nécessaire. Le builder attend les workflows et
+contrôle séparément leur résultat. Le redémarrage serveur est signalé comme
+inclus dans le workflow de migration ; il ne constitue pas un test en jeu.
+
+## Icônes et zones
+
+Tout nouveau sort reçoit `client/resources/app/retroclient/clips/spells/icons/up/<spellId>.swf`.
+Le fichier source et `template_sort.swf` ne sont jamais modifiés. Le template
+vide suspend le flux après la copie locale et vérifie le hash après la retouche
+graphique. Les icônes vanilla ou partagées sont refusées lors d'une tentative
+de remplacement.
+
+La première version accepte uniquement `Pa`, `Cb` à `Ce` et `Xb` à `Xe`.
+Les zones normales et critiques sont conservées séparément et écrites dans la
+migration et les données client.
+
+## Tests locaux
+
+```text
+test.bat
+```
+
+ou :
+
+```text
+java -jar target/dofus-gladiatrool-spell-builder.jar --self-test
+```
+
+Le self-test couvre les jets fixes et variables, les éléments, les zones
+natives, la validation d'ID, la migration SQL et les empreintes SHA-256.
+
 ## Contributions et licence
 
 Les issues et pull requests sont bienvenues. Consultez `CONTRIBUTING.md` avant de proposer une modification et ne joignez jamais de client Dofus, de SWF/FLA, de dump SQL ou de configuration privée.

@@ -2,10 +2,10 @@
 /build/
 /target/
 /backups/
+/operations/
 
 # Configuration et données d'exécution locales
 /builder.properties
-/created_spells.json
 /custom_spells.json
 /spell_patches.json
 

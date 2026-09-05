@@ -1,10 +1,23 @@
 # Copiez ce fichier sous le nom builder.properties, puis adaptez les chemins.
-# Les chemins peuvent être absolus ou relatifs au dossier du builder.
+# Les chemins peuvent être absolus ou relatifs au dépôt ciblé.
 # Utilisez / dans les chemins Windows.
+
+repository.path=../../
+repository.remote=origin
+repository.branch=main
 
 server.config.path=../../serveur/game/config.properties
 client.customSpells.path=../../client/resources/app/retroclient/custom_spells.json
 client.spellPatches.path=../../client/resources/app/retroclient/spell_patches.json
+client.iconDirectory=../../client/resources/app/retroclient/clips/spells/icons/up
+icon.emptyTemplate.path=../../client/resources/app/retroclient/clips/spells/icons/up/template_sort.swf
+
+server.migrationWorkflow=aegnor-control.yml
+client.publishWorkflow=publish-client.yml
+server.workflowRepository=Charlydcn/PROJET-DOFUS-RETRO
+server.environment=Aegnor
+operation.directory=operations
+backup.directory=backups
 
 # Valeurs proposées par défaut pendant la création d'un sort.
 template.iconSpellId=176

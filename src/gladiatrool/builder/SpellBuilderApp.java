@@ -5,6 +5,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import org.fusesource.jansi.internal.Kernel32;
 import org.fusesource.jansi.internal.WindowsSupport;
+import gladiatrool.builder.config.BuilderConfig;
+import gladiatrool.builder.database.MigrationGenerator;
+import gladiatrool.builder.client.IconAssetManager;
+import gladiatrool.builder.operations.PreparedOperationService;
+import gladiatrool.builder.operations.OperationManager;
+import gladiatrool.builder.operations.OperationDeliveryService;
+import gladiatrool.builder.git.GitService;
+import gladiatrool.builder.validation.OperationValidator;
+import gladiatrool.builder.validation.ClientValidator;
+import gladiatrool.builder.domain.ZoneSpec;
 
 import java.io.Console;
 import java.io.IOException;
@@ -39,11 +49,16 @@ public final class SpellBuilderApp {
     private Path registryFile;
     private int iconTemplateSpellId;
     private int animationTemplateSpellId;
+    private BuilderConfig builderConfig;
+    private OperationManager operationManager;
+    private Path iconEmptyTemplate;
+    private boolean emptyIconTemplate;
 
     public static void main(String[] args) {
         try {
             SpellBuilderApp app = new SpellBuilderApp();
             if (args.length > 0 && "--integration-test".equals(args[0])) app.runIntegrationTest();
+            else if (args.length > 0 && "--self-test".equals(args[0])) SelfTest.run();
             else app.run();
         } catch (UserCancelledException ignored) {
             System.out.println("\nOpération annulée. Aucune modification n'a été effectuée.");
@@ -196,16 +211,22 @@ public final class SpellBuilderApp {
 
     private void run() throws Exception {
         loadBuilderPaths();
-        backupRoot = builderDirectory.resolve("backups");
         registryFile = builderDirectory.resolve("created_spells.json");
 
         ui.title("Générateur de sorts Gladiatrool");
         ui.info("Grade 6 uniquement · IDs 10000–10999 · dégâts directs et vol de vie");
-        int mode = ui.select("Action", List.of(
-                "Créer un sort",
-                "Modifier un sort Gladiatrool existant",
-                "Supprimer un sort personnalisé"
-        ));
+            int mode = ui.select("Action", List.of(
+                    "Créer un sort",
+                    "Modifier un sort Gladiatrool existant",
+                    "Supprimer un sort personnalisé",
+                    "Reprendre une opération interrompue",
+                    "Vérifier l'état d'une opération"
+            ));
+
+            if (mode >= 3) {
+                showOperations(mode == 3);
+                return;
+            }
 
         Properties config = loadProperties(gameConfig);
         DbSettings db = DbSettings.from(config);
@@ -215,6 +236,7 @@ public final class SpellBuilderApp {
         }
 
         try (Connection connection = DriverManager.getConnection(db.url(), db.user, db.password)) {
+            connection.setReadOnly(true);
             verifySchema(connection);
             ui.success("Connexion et schéma validés.");
 
@@ -233,34 +255,142 @@ public final class SpellBuilderApp {
 
             reviewDraft(connection, draft);
 
-            CreationSnapshot snapshot = captureSnapshot(connection, draft);
-            Path backupDir = writeBackup(snapshot, draft);
-            try {
-                createSpell(connection, draft, snapshot);
-                updateClientData(draft);
-                updateRegistry(draft, snapshot);
-            } catch (Exception failure) {
-                try {
-                    rollback(connection, snapshot, draft.id);
-                    restoreClientBackup(snapshot);
-                    restoreRegistryBackup(snapshot);
-                } catch (Exception rollbackFailure) {
-                    failure.addSuppressed(rollbackFailure);
-                }
-                throw failure;
-            }
-
-            ui.title("Sort créé");
-            ui.success("ID : " + draft.id + " · " + draft.name);
-            ui.info("Sauvegarde : " + backupDir);
-            ui.info("Données client : " + clientDataFile);
-            System.out.println();
-            System.out.println("Étapes restantes :");
-            System.out.println("  1. Vérifier que l'override AS2 Custom Spells est publié dans core.swf.");
-            System.out.println("  2. Redémarrer le serveur Game.");
-            System.out.println("  3. Redémarrer complètement le client.");
-            System.out.println("  4. Entrer dans le Gladiatrool et tester le sort.");
+            prepareCreateOperation(connection, draft, db);
         }
+    }
+
+    private void prepareCreateOperation(Connection connection, SpellDraft draft, DbSettings db) throws Exception {
+        new OperationValidator().validateEffects(convertEffects(draft.normalEffects), convertEffects(draft.criticalEffects));
+        CreationSnapshot snapshot = captureSnapshot(connection, draft);
+        String migrationName = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")) + "_create_spell_" + draft.id + ".sql";
+        String migration = buildCreateMigration(connection, draft, snapshot);
+        Map<Path, byte[]> files = new LinkedHashMap<>();
+        files.put(clientDataFile, clientDataBytes(draft));
+        files.put(registryFile, registryBytes(draft, snapshot));
+        Path iconSource = emptyIconTemplate ? iconEmptyTemplate : clientIconDirectory.resolve((draft.directIconId == null ? draft.iconTemplateSpellId : draft.directIconId) + ".swf");
+        if (!Files.isRegularFile(iconSource)) throw new IllegalStateException("Source SWF introuvable : " + iconSource);
+        files.put(clientIconDirectory.resolve(draft.id + ".swf"), Files.readAllBytes(iconSource));
+        Map<String, Path> backupFiles = new LinkedHashMap<>();
+        backupFiles.put("custom_spells.json.before", clientDataFile);
+        backupFiles.put("spell_patches.json.before", clientPatchesFile);
+        backupFiles.put("created_spells.json.before", registryFile);
+        String restoreSql = buildCreationRestoreSql(draft, snapshot);
+        Path repository = builderConfig.repository();
+        OperationManager.PreparedOperation operation = new PreparedOperationService(operationManager).prepare("create", draft.id, repository, backupRoot,
+                db.database, builderConfig.value("server.environment", "Aegnor"), migrationName, migration, files, backupFiles, restoreSql, true, List.of());
+        operation.manifest().branch = builderConfig.branch();
+        operation.manifest().stagedFiles.replaceAll(path -> path.replace('\\', '/'));
+        operation.manifest().steps.put("validation", "OK");
+        operationManager.save(operation);
+        ui.title("Opération préparée");
+        printOperationContext(operation.manifest());
+        printSummary(draft);
+        System.out.println("Icône créée       : " + draft.id + ".swf depuis " + iconSource.getFileName());
+        System.out.println("Zone              : " + draft.normalZone.summary() + (draft.normalZone.equals(draft.criticalZone) ? "" : " · critique=" + draft.criticalZone.summary()));
+        System.out.println("Migration         : " + migrationName);
+        System.out.println("Publication client: oui");
+        System.out.println("Sauvegarde        : " + operation.manifest().backupDirectory);
+        if (!ui.confirm("Appliquer les fichiers préparés au dépôt local ?", false)) throw new UserCancelledException();
+        new PreparedOperationService(operationManager).apply(operation, repository);
+        ClientValidator localClient = new ClientValidator();
+        localClient.validateJson(clientDataFile); localClient.validateJson(clientPatchesFile); localClient.validateRecord(clientDataFile, draft.id); localClient.validateDirectIcon(clientDataFile, draft.id); localClient.validateSwf(clientIconDirectory.resolve(draft.id + ".swf"));
+        if (emptyIconTemplate) {
+            Path targetIcon = clientIconDirectory.resolve(draft.id + ".swf");
+            String copiedHash = IconAssetManager.sha256(targetIcon);
+            ui.info("Modifiez maintenant " + targetIcon + " avec votre outil graphique, puis revenez dans le builder.");
+            if (!ui.confirm("L'icône a-t-elle été modifiée graphiquement ?", false)) throw new UserCancelledException();
+            String editedHash = IconAssetManager.sha256(targetIcon);
+            if (copiedHash.equals(editedHash) && !ui.confirm("Le hash est inchangé. Continuer malgré tout ?", false)) throw new UserCancelledException();
+            operation.manifest().hashes.put(targetIcon.toString(), editedHash);
+            operation.manifest().steps.put("iconeGraphique", copiedHash.equals(editedHash) ? "INCHANGE_CONFIRME" : "MODIFIE");
+            operationManager.save(operation);
+        }
+        ui.success("Source locale : OK · JSON : OK · SWF : OK · migration prête");
+        if (ui.confirm("Autoriser le commit, le push, la migration serveur et la publication client ?", false)) {
+            deliverOperation(operation, repository);
+        } else {
+            ui.info("Opération conservée pour reprise : " + operation.directory());
+        }
+    }
+
+    private void deliverOperation(OperationManager.PreparedOperation operation, Path repository) throws Exception {
+        String existingChanges = new GitService(repository).status();
+        if (!existingChanges.isBlank()) {
+            ui.info("Modifications Git déjà présentes :\n" + existingChanges);
+            if (!ui.confirm("Continuer en versionnant uniquement les fichiers de cette opération ?", false)) throw new UserCancelledException();
+        }
+        Path configFile = builderDirectory.resolve("builder.properties");
+        Properties p = loadProperties(configFile);
+        OperationDeliveryService delivery = new OperationDeliveryService(repository, builderConfig.remote(), builderConfig.branch(),
+                p.getProperty("server.workflowRepository", "Charlydcn/PROJET-DOFUS-RETRO"),
+                p.getProperty("server.migrationWorkflow", "aegnor-control.yml"), p.getProperty("client.publishWorkflow", "publish-client.yml"), operationManager);
+        OperationDeliveryService.DeliveryResult result = delivery.deliver(operation, repository);
+        ui.info("Commit : OK · Push : OK");
+        ui.info("Migration serveur : " + (result.migration == null ? operation.manifest().steps.getOrDefault("migrationServeur", "NON EXECUTÉE") : result.migration.success ? "OK" : "ÉCHEC"));
+        ui.info("Publication client : " + (result.publication == null ? (operation.manifest().clientPublication ? operation.manifest().steps.getOrDefault("publicationClient", "NON EXECUTÉE") : "non prévue") : result.publication.success ? "OK" : "ÉCHEC"));
+        ui.info("Test en jeu : NON VALIDÉ");
+    }
+
+    private void printOperationContext(gladiatrool.builder.domain.OperationManifest manifest) {
+        ui.info("Dépôt Git ciblé : " + manifest.repository);
+        ui.info("Branche ciblée : " + manifest.branch);
+        ui.info("Base concernée : " + manifest.database);
+        ui.info("Environnement serveur : " + manifest.serverEnvironment);
+        ui.info("Fichiers préparés : " + manifest.stagedFiles);
+        ui.info("Fichiers SWF : " + manifest.swfFiles + (manifest.deletedFiles.isEmpty() ? "" : " · suppressions=" + manifest.deletedFiles));
+        ui.info("Migration : " + manifest.migrationFile);
+        ui.info("Publication client prévue : " + yesNo(manifest.clientPublication));
+        ui.info("Sauvegarde créée : " + manifest.backupDirectory);
+    }
+
+    private String buildCreateMigration(Connection connection, SpellDraft draft, CreationSnapshot snapshot) throws SQLException {
+        AnimationTemplate animation = loadAnimationTemplate(connection, draft.animationTemplateSpellId);
+        Map<Integer, String> names = loadSpellNames(connection);
+        StringBuilder fullMorphs = new StringBuilder();
+        StringBuilder layouts = new StringBuilder();
+        for (int morphId : draft.morphIds) {
+            List<MorphSpell> spells = parseMorphSpells(snapshot.fullMorphValues.get(morphId), names);
+            MorphSpell replacement = draft.replacements.get(morphId);
+            if (replacement == null && draft.global && draft.replace) replacement = findByPosition(spells, draft.replacePosition);
+            String updated = applyLink(spells, draft.id, replacement);
+            fullMorphs.append("UPDATE `full_morphs` SET `spells`='").append(sqlEscape(updated)).append("' WHERE `id`=").append(morphId).append(";\n");
+            final MorphSpell expected = replacement;
+            for (SavedLayout layout : snapshot.savedLayouts) if (layout.fullMorphId == morphId) {
+                List<MorphSpell> personal = parseMorphSpells(layout.spells, names);
+                MorphSpell personalReplacement = expected == null ? null : personal.stream().filter(s -> s.id == expected.id || s.position == expected.position).findFirst().orElse(null);
+                layouts.append("UPDATE `gladiatrool_spells` SET `spells`='").append(sqlEscape(applyLink(personal, draft.id, personalReplacement))).append("' WHERE `id`=").append(layout.id).append(";\n");
+            }
+        }
+        return new MigrationGenerator().createSpell(draft.id, draft.name, animation.sprite, animation.spriteInfo, draft.paCost, draft.poMin, draft.poMax,
+                draft.ratioCc, draft.ratioEc, draft.lineOnly, draft.needLos, draft.poModifiable, draft.maxPerTurn, draft.maxPerTarget,
+                draft.cooldown, draft.ecEndsTurn, draft.targetMask, draft.normalZone.code(), draft.criticalZone.code(),
+                convertEffects(draft.normalEffects), convertEffects(draft.criticalEffects), fullMorphs.toString(), layouts.toString());
+    }
+
+    private List<gladiatrool.builder.domain.DamageLine> convertEffects(List<DamageLine> source) {
+        List<gladiatrool.builder.domain.DamageLine> result = new ArrayList<>();
+        for (DamageLine e : source) result.add(new gladiatrool.builder.domain.DamageLine(gladiatrool.builder.domain.DamageLine.Element.valueOf(e.element.name()), e.lifeSteal, e.min, e.max, e.effectTarget));
+        return result;
+    }
+
+    private String buildCreationRestoreSql(SpellDraft draft, CreationSnapshot snapshot) {
+        StringBuilder sql = new StringBuilder("-- Restauration avant creation du sort ").append(draft.id).append("\n");
+        sql.append("DELETE FROM `spells_effect` WHERE `spellID`=").append(draft.id).append(";\nDELETE FROM `spells_grade` WHERE `spellID`=").append(draft.id).append(";\nDELETE FROM `spells` WHERE `id`=").append(draft.id).append(";\n");
+        for (Map.Entry<Integer,String> entry : snapshot.fullMorphValues.entrySet()) sql.append("UPDATE `full_morphs` SET `spells`='").append(sqlEscape(entry.getValue())).append("' WHERE `id`=").append(entry.getKey()).append(";\n");
+        for (SavedLayout layout : snapshot.savedLayouts) sql.append("UPDATE `gladiatrool_spells` SET `spells`='").append(sqlEscape(layout.spells)).append("' WHERE `id`=").append(layout.id).append(";\n");
+        return sql.toString();
+    }
+
+    private byte[] clientDataBytes(SpellDraft draft) throws IOException {
+        Map<String,String> records = new TreeMap<>(Comparator.comparingInt(Integer::parseInt));
+        if (Files.exists(clientDataFile) && Files.size(clientDataFile)>0) records.putAll(json.readValue(clientDataFile.toFile(), new TypeReference<Map<String,String>>() {}));
+        records.put(String.valueOf(draft.id), ClientRecord.encode(draft)); return json.writeValueAsBytes(records);
+    }
+
+    private byte[] registryBytes(SpellDraft draft, CreationSnapshot snapshot) throws IOException {
+        Map<String,CreatedSpellRecord> registry=loadRegistry(); CreatedSpellRecord record=new CreatedSpellRecord();record.id=draft.id;record.name=draft.name;record.global=draft.global;record.morphIds.addAll(draft.morphIds);record.replacementMetadataAvailable=true;
+        for(int morphId:draft.morphIds){MorphSpell replacement=draft.replacements.get(morphId);if(replacement==null&&draft.global&&draft.replace)replacement=findRawByPosition(snapshot.fullMorphValues.get(morphId),draft.replacePosition);if(replacement!=null)record.morphReplacements.put(morphId,replacement.serialize());}
+        registry.put(String.valueOf(draft.id),record);return json.writeValueAsBytes(new TreeMap<>(registry));
     }
 
     private SpellDraft askDraft(Connection connection) throws SQLException {
@@ -282,15 +412,23 @@ public final class SpellBuilderApp {
     private void askTemplates(Connection connection, SpellDraft d) throws SQLException {
         int iconMode = ui.select("Source de l'icône", List.of(
                 "Icône d'un sort existant (par ID de sort)",
-                "Icône par ID dans clips/spells/icons/up"
+                "Icône par ID dans clips/spells/icons/up",
+                "Template vide (modification graphique manuelle)"
         ));
+        emptyIconTemplate = false;
         if (iconMode == 0) {
             d.iconTemplateSpellId = askTemplateSpellId(connection,
                     "ID du sort modèle pour l'icône", iconTemplateSpellId, "Icône");
             d.directIconId = null;
-        } else {
+        } else if (iconMode == 1) {
             d.iconTemplateSpellId = iconTemplateSpellId;
             d.directIconId = askDirectIconId();
+        } else {
+            if (!Files.isRegularFile(iconEmptyTemplate)) throw new IllegalStateException("Template vide introuvable : " + iconEmptyTemplate);
+            d.iconTemplateSpellId = iconTemplateSpellId;
+            d.directIconId = null;
+            emptyIconTemplate = true;
+            ui.info("Template sélectionné : " + iconEmptyTemplate);
         }
         d.animationTemplateSpellId = askTemplateSpellId(connection,
                 "ID du sort modèle pour l'animation", animationTemplateSpellId, "Animation");
@@ -374,12 +512,22 @@ public final class SpellBuilderApp {
         }
         d.normalEffects.clear();
         d.criticalEffects.clear();
+        d.normalZone = askZone("Zone normale", d.normalZone);
         ui.title("Effets normaux");
         askEffects(d.normalEffects, false);
         if (d.ratioCc > 0) {
+            d.criticalZone = askZone("Zone critique", d.normalZone);
+            if (!d.normalZone.equals(d.criticalZone) && !ui.confirm("Les zones normale et critique sont différentes. Cette différence est-elle volontaire ?", false)) throw new UserCancelledException();
             ui.title("Effets critiques");
             askEffects(d.criticalEffects, true);
         }
+    }
+
+    private ZoneSpec askZone(String label, ZoneSpec current) {
+        int shape = ui.select(label + " · forme", List.of("Monocase", "Cercle", "Croix"));
+        if (shape == 0) return ZoneSpec.single();
+        int radius = ui.askInt(label + " · rayon (1 à 4)", 1, 4, current == null || current.radius() == 0 ? 1 : current.radius());
+        return shape == 1 ? ZoneSpec.circle(radius) : ZoneSpec.cross(radius);
     }
 
     private void printEffectLines(String type, List<DamageLine> effects) {
@@ -877,6 +1025,7 @@ public final class SpellBuilderApp {
                     "Icône",
                     "Animation de lancement",
                     "Effets normaux et critiques",
+                    "Zones normales et critiques",
                     "Terminer et enregistrer",
                     "Annuler"
             ));
@@ -935,6 +1084,12 @@ public final class SpellBuilderApp {
                     edited.effectsEdited = true;
                     break;
                 case 14:
+                    edited.normalZone = askZone("Zone normale", edited.normalZone);
+                    edited.criticalZone = edited.ratioCc > 0 ? askZone("Zone critique", edited.normalZone) : edited.normalZone;
+                    if (!edited.normalZone.equals(edited.criticalZone) && !ui.confirm("Les zones normale et critique sont différentes. Cette différence est-elle volontaire ?", false)) throw new UserCancelledException();
+                    edited.effectsEdited = true;
+                    break;
+                case 15:
                     if (!ui.confirm("Enregistrer ces modifications ?", false)) break;
                     applyGradeUpdate(connection, spell, original, edited);
                     return;
@@ -982,7 +1137,7 @@ public final class SpellBuilderApp {
 
     private void loadDamageEffects(Connection connection, GradeSettings settings) throws SQLException {
         try (PreparedStatement ps = connection.prepareStatement(
-                "SELECT `effectID`,`min`,`max`,`isCCeffect`,`effectTarget` FROM `spells_effect` WHERE `spellID`=? AND `gradeID`=? ORDER BY `isCCeffect`,`effectID`,`min`,`max`")) {
+                "SELECT `effectID`,`min`,`max`,`isCCeffect`,`effectTarget`,`area` FROM `spells_effect` WHERE `spellID`=? AND `gradeID`=? ORDER BY `isCCeffect`,`effectID`,`min`,`max`")) {
             ps.setInt(1, settings.spellId);
             ps.setInt(2, CUSTOM_GRADE);
             try (ResultSet rs = ps.executeQuery()) {
@@ -996,7 +1151,10 @@ public final class SpellBuilderApp {
                     int persistedMax = rs.getInt("max");
                     line.max = persistedMax == -1 ? line.min : persistedMax;
                     line.effectTarget = rs.getInt("effectTarget");
-                    (rs.getBoolean("isCCeffect") ? settings.criticalEffects : settings.normalEffects).add(line);
+                    boolean critical = rs.getBoolean("isCCeffect");
+                    try { if (critical) settings.criticalZone = ZoneSpec.fromCode(rs.getString("area")); else settings.normalZone = ZoneSpec.fromCode(rs.getString("area")); }
+                    catch (IllegalArgumentException unknownZone) { settings.effectsEditable = false; }
+                    (critical ? settings.criticalEffects : settings.normalEffects).add(line);
                 }
             }
         }
@@ -1014,6 +1172,7 @@ public final class SpellBuilderApp {
         System.out.println("Animation        : " + (g.animationTemplateSpellId == null ? "actuelle" : "sort modèle ID " + g.animationTemplateSpellId));
         System.out.println("Effets normaux  : " + describeEffects(g.normalEffects));
         System.out.println("Effets critiques: " + (g.ratioCc == 0 ? "aucun" : describeEffects(g.criticalEffects)));
+        System.out.println("Zones           : normale=" + g.normalZone.summary() + ", critique=" + g.criticalZone.summary());
         if (g.textPatched) {
             System.out.println("Nom              : " + g.name);
             System.out.println("Description      : " + (g.description.isBlank() ? "aucune" : g.description));
@@ -1067,24 +1226,55 @@ public final class SpellBuilderApp {
         boolean patchExisted = Files.exists(clientPatchesFile);
         byte[] patchBefore = patchExisted ? Files.readAllBytes(clientPatchesFile) : null;
         Path backupDir = writeUpdateBackup(connection, original, patchExisted, patchBefore);
-        try {
-            updateGradeRow(connection, edited);
-            if (edited.effectsEdited) replaceEffects(connection, edited);
-            updateSpellVisuals(connection, edited);
-            updateClientPatch(edited);
-        } catch (Exception failure) {
-            try {
-                updateGradeRow(connection, original);
-                if (edited.effectsEdited) replaceEffects(connection, original);
-                updateSpellVisuals(connection, original);
-                if (patchExisted) Files.write(clientPatchesFile, patchBefore); else Files.deleteIfExists(clientPatchesFile);
-            } catch (Exception rollbackFailure) { failure.addSuppressed(rollbackFailure); }
-            throw failure;
+        boolean iconChanged = !Objects.equals(original.iconTemplateSpellId, edited.iconTemplateSpellId) || !Objects.equals(original.directIconId, edited.directIconId);
+        boolean clientChanged = edited.effectsEdited || edited.textPatched || iconChanged;
+        String migration = new MigrationGenerator().updateGrade(edited.spellId, edited.paCost, edited.poMin, edited.poMax, edited.ratioCc, edited.ratioEc,
+                edited.lineOnly, edited.needLos, edited.poModifiable, edited.maxPerTurn, edited.maxPerTarget, edited.cooldown, edited.ecEndsTurn,
+                edited.name, edited.sprite, edited.spriteInfo, edited.normalZone.code(), edited.criticalZone.code(), convertEffects(edited.normalEffects), convertEffects(edited.criticalEffects), edited.effectsEdited);
+        String migrationName = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")) + "_update_spell_" + edited.spellId + ".sql";
+        Path repository = builderConfig.repository();
+        Map<Path,byte[]> files = new LinkedHashMap<>();
+        if (clientChanged) files.put(clientPatchesFile, updateClientPatchBytes(edited));
+        Map<String,Path> backupFiles = new LinkedHashMap<>();
+        backupFiles.put("spell_patches.json.before", clientPatchesFile);
+        if (iconChanged) {
+            if (edited.spellId < CUSTOM_ID_MIN || edited.spellId > CUSTOM_ID_MAX || !isDedicatedIcon(edited.spellId)) {
+                throw new IllegalStateException("Icône refusée : le sort est vanilla ou son icône est partagée. Une ressource dédiée doit être créée explicitement.");
+            }
+            int sourceIconId = edited.directIconId == null ? edited.iconTemplateSpellId : edited.directIconId;
+            Path target = clientIconDirectory.resolve(edited.spellId + ".swf");
+            Path source = clientIconDirectory.resolve(sourceIconId + ".swf");
+            if (!Files.isRegularFile(target) || !Files.isRegularFile(source)) throw new IllegalStateException("Icône source ou cible absente : " + source + " / " + target);
+            if (!target.equals(source)) { files.put(target, Files.readAllBytes(source)); backupFiles.put(edited.spellId + ".swf.before", target); }
+            edited.directIconId = edited.spellId;
         }
-        ui.title("Sort modifié");
-        ui.success(spell.name + " (ID " + spell.id + ")");
-        ui.info("Sauvegarde : " + backupDir);
-        ui.info("Redémarrer le serveur Game et le client.");
+        OperationManager.PreparedOperation operation = new PreparedOperationService(operationManager).prepare("update", edited.spellId, repository, backupRoot,
+                "aegnor_game", builderConfig.value("server.environment", "Aegnor"), migrationName, migration, files, backupFiles,
+                Files.readString(backupDir.resolve("restore.sql")), clientChanged, List.of());
+        operation.manifest().branch = builderConfig.branch();
+        operation.manifest().steps.put("validation", "OK");
+        operationManager.save(operation);
+        ui.title("Opération préparée");
+        printOperationContext(operation.manifest());
+        ui.info("Sort : " + edited.spellId + " · " + spell.name);
+        ui.info("Modification serveur : oui");
+        ui.info("Données client : " + (clientChanged ? "oui" : "non"));
+        ui.info("Migration : " + migrationName);
+        ui.info("Publication client : " + (clientChanged ? "oui" : "non"));
+        ui.info("Sauvegarde : " + operation.manifest().backupDirectory);
+        if (!ui.confirm("Appliquer les fichiers préparés au dépôt local ?", false)) throw new UserCancelledException();
+        new PreparedOperationService(operationManager).apply(operation, repository);
+        if (clientChanged) new ClientValidator().validateJson(clientPatchesFile);
+        if (files.containsKey(clientIconDirectory.resolve(edited.spellId + ".swf"))) new ClientValidator().validateSwf(clientIconDirectory.resolve(edited.spellId + ".swf"));
+        ui.success("Source locale : OK · JSON : " + (clientChanged ? "OK" : "non modifié"));
+        if (ui.confirm("Autoriser le commit, le push et la migration serveur" + (clientChanged ? " avec publication client" : "") + " ?", false)) deliverOperation(operation, repository);
+        else ui.info("Opération conservée pour reprise : " + operation.directory());
+    }
+
+    private byte[] updateClientPatchBytes(GradeSettings g) throws IOException {
+        Map<String,String> patches = new TreeMap<>(Comparator.comparingInt(Integer::parseInt));
+        if (Files.exists(clientPatchesFile) && Files.size(clientPatchesFile)>0) patches.putAll(json.readValue(clientPatchesFile.toFile(), new TypeReference<Map<String,String>>() {}));
+        patches.put(String.valueOf(g.spellId), g.encode()); return json.writeValueAsBytes(patches);
     }
 
     private void updateSpellVisuals(Connection connection, GradeSettings g) throws SQLException {
@@ -1194,29 +1384,46 @@ public final class SpellBuilderApp {
         snapshotDraft.morphIds.addAll(record.morphIds);
         CreationSnapshot snapshot = captureSnapshot(connection, snapshotDraft);
         Path backupDir = writeDeletionBackup(connection, snapshot, record);
-        try {
-            deleteSpell(connection, record);
-            removeClientRecord(record.id);
-            removeClientPatch(record.id);
-            registry.remove(String.valueOf(record.id));
-            writeRegistry(registry);
-        } catch (Exception failure) {
-            try {
-                executeRestoreSql(connection, backupDir.resolve("restore.sql"));
-                restoreClientBackup(snapshot);
-                restoreClientPatchesBackup(snapshot);
-                restoreRegistryBackup(snapshot);
-            } catch (Exception rollbackFailure) {
-                failure.addSuppressed(rollbackFailure);
-            }
-            throw failure;
-        }
-
-        ui.title("Sort supprimé");
-        ui.success(record.name + " (ID " + record.id + ")");
-        ui.info("Sauvegarde de suppression : " + backupDir);
-        ui.info("Redémarrer le serveur Game et le client.");
+        String migrationName = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")) + "_delete_spell_" + record.id + ".sql";
+        String migration = buildDeletionMigration(record, snapshot, connection);
+        Map<Path,byte[]> files = new LinkedHashMap<>();
+        files.put(clientDataFile, removeClientRecordBytes(record.id));
+        files.put(clientPatchesFile, removeClientPatchBytes(record.id));
+        registry.remove(String.valueOf(record.id));
+        files.put(registryFile, json.writeValueAsBytes(new TreeMap<>(registry)));
+        Map<String,Path> backupFiles = new LinkedHashMap<>();
+        backupFiles.put("custom_spells.json.before", clientDataFile); backupFiles.put("spell_patches.json.before", clientPatchesFile); backupFiles.put("created_spells.json.before", registryFile);
+        List<Path> deletions = new ArrayList<>();
+        Path icon = clientIconDirectory.resolve(record.id + ".swf");
+        if (isDedicatedIcon(record.id) && Files.isRegularFile(icon)) { backupFiles.put(record.id + ".swf.before", icon); deletions.add(icon); }
+        OperationManager.PreparedOperation operation = new PreparedOperationService(operationManager).prepare("delete", record.id, builderConfig.repository(), backupRoot,
+                "aegnor_game", builderConfig.value("server.environment", "Aegnor"), migrationName, migration, files, backupFiles,
+                Files.readString(backupDir.resolve("restore.sql")), true, deletions);
+        operation.manifest().branch = builderConfig.branch();
+        operation.manifest().steps.put("validation", "OK"); operationManager.save(operation);
+        ui.title("Opération préparée"); printOperationContext(operation.manifest()); ui.info("Sort : " + record.name + " (ID " + record.id + ")"); ui.info("Migration : " + migrationName);
+        ui.info("SWF dédié : " + (deletions.isEmpty() ? "conservé (partagé ou absent)" : "suppression prévue")); ui.info("Publication client : oui"); ui.info("Sauvegarde : " + operation.manifest().backupDirectory);
+        if (!ui.confirm("Appliquer les fichiers préparés au dépôt local ?", false)) throw new UserCancelledException();
+        new PreparedOperationService(operationManager).apply(operation, builderConfig.repository());
+        new ClientValidator().validateJson(clientDataFile); new ClientValidator().validateJson(clientPatchesFile);
+        if (ui.confirm("Autoriser le commit, le push, la migration serveur et la publication client ?", false)) deliverOperation(operation, builderConfig.repository());
+        else ui.info("Opération conservée pour reprise : " + operation.directory());
     }
+
+    private String buildDeletionMigration(CreatedSpellRecord record, CreationSnapshot snapshot, Connection connection) throws SQLException {
+        StringBuilder restoreLinks = new StringBuilder();
+        for (Map.Entry<Integer,String> entry : snapshot.fullMorphValues.entrySet()) restoreLinks.append("UPDATE `full_morphs` SET `spells`='").append(sqlEscape(removeAndRestoreLink(entry.getValue(), record.id, record.morphReplacements.get(entry.getKey())))).append("' WHERE `id`=").append(entry.getKey()).append(";\n");
+        for (SavedLayout layout : snapshot.savedLayouts) restoreLinks.append("UPDATE `gladiatrool_spells` SET `spells`='").append(sqlEscape(removeAndRestoreLink(layout.spells, record.id, record.layoutReplacements.get(layout.id)))).append("' WHERE `id`=").append(layout.id).append(";\n");
+        return new MigrationGenerator().deleteSpell(record.id, restoreLinks.toString());
+    }
+
+    private boolean isDedicatedIcon(int spellId) throws IOException {
+        if (!Files.isRegularFile(clientDataFile)) return false;
+        Map<String,String> records=json.readValue(clientDataFile.toFile(),new TypeReference<Map<String,String>>(){}); String value=records.get(String.valueOf(spellId)); if(value==null)return false; String[] fields=value.split("\\|",-1); return fields.length>19 && String.valueOf(spellId).equals(fields[19]);
+    }
+
+    private byte[] removeClientRecordBytes(int spellId) throws IOException { Map<String,String> records=Files.exists(clientDataFile)?json.readValue(clientDataFile.toFile(),new TypeReference<Map<String,String>>(){}):new TreeMap<>();records.remove(String.valueOf(spellId));return json.writeValueAsBytes(new TreeMap<>(records)); }
+    private byte[] removeClientPatchBytes(int spellId) throws IOException { Map<String,String> records=Files.exists(clientPatchesFile)?json.readValue(clientPatchesFile.toFile(),new TypeReference<Map<String,String>>(){}):new TreeMap<>();records.remove(String.valueOf(spellId));return json.writeValueAsBytes(new TreeMap<>(records)); }
 
     private Map<String, CreatedSpellRecord> discoverCreatedSpells(Connection connection) throws Exception {
         Map<String, CreatedSpellRecord> records = loadRegistry();
@@ -1373,7 +1580,36 @@ public final class SpellBuilderApp {
                 try (ResultSet rs = ps.executeQuery()) { if (rs.next()) return false; }
             }
         }
+        for (String table : List.of("full_morphs", "gladiatrool_spells")) {
+            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM `" + table + "` WHERE `spells` LIKE ? LIMIT 1")) {
+                ps.setString(1, "%" + id + ";%");
+                try (ResultSet rs = ps.executeQuery()) { if (rs.next()) return false; }
+            }
+        }
+        if (clientIconDirectory != null && Files.exists(clientIconDirectory.resolve(id + ".swf"))) return false;
+        for (Path jsonFile : List.of(clientDataFile, clientPatchesFile)) {
+            try {
+                if (jsonFile != null && Files.isRegularFile(jsonFile) && Files.size(jsonFile) > 0) {
+                    if (json.readTree(jsonFile.toFile()).has(String.valueOf(id))) return false;
+                }
+            } catch (IOException invalidJson) { throw new IllegalStateException("JSON client invalide : " + jsonFile, invalidJson); }
+        }
+        if (builderConfig != null && repositoryContainsId(builderConfig.repository(), id)) return false;
         return true;
+    }
+
+    private boolean repositoryContainsId(Path repository, int id) {
+        if (repository == null || !Files.isDirectory(repository)) return false;
+        String token = String.valueOf(id);
+        try (java.util.stream.Stream<Path> stream = Files.walk(repository)) {
+            return stream.filter(Files::isRegularFile)
+                    .filter(p -> !p.toString().contains("\\.git\\") && !p.toString().contains("\\target\\") && !p.toString().contains("\\build\\") && !p.toString().contains("\\backups\\"))
+                    .filter(p -> p.toString().endsWith(".java") || p.toString().endsWith(".sql") || p.toString().endsWith(".json"))
+                    .anyMatch(p -> {
+                        try { return Files.readString(p).matches("(?s).*\\b" + token + "\\b.*"); }
+                        catch (IOException ignored) { return false; }
+                    });
+        } catch (IOException e) { throw new IllegalStateException("Analyse du dépôt impossible.", e); }
     }
 
     private AnimationTemplate loadAnimationTemplate(Connection c) throws SQLException {
@@ -1450,6 +1686,7 @@ public final class SpellBuilderApp {
         System.out.println("Cibles           : " + (d.targetMask == 0 ? "tout le monde" : d.targetMask == 1 ? "ennemis" : "lanceur"));
         System.out.println("Effets normaux   : " + describeEffects(d.normalEffects));
         System.out.println("Effets critiques : " + (d.ratioCc == 0 ? "aucun" : describeEffects(d.criticalEffects)));
+        System.out.println("Zones            : normale=" + d.normalZone.summary() + ", critique=" + d.criticalZone.summary());
         System.out.println("Affectation      : " + (d.replace ? "remplacement réversible" : "ajout sans raccourci"));
         String icon = d.directIconId == null ? "sort modèle ID " + d.iconTemplateSpellId
                 : "fichier ID " + d.directIconId + " dans clips/spells/icons/up";
@@ -1462,14 +1699,45 @@ public final class SpellBuilderApp {
 
     private void loadBuilderPaths() throws IOException {
         builderDirectory = Path.of("").toAbsolutePath().normalize();
-        Path builderConfig = builderDirectory.resolve("builder.properties");
-        Properties paths = loadProperties(builderConfig);
+        builderConfig = BuilderConfig.load(builderDirectory);
+        Path builderProperties = builderDirectory.resolve("builder.properties");
+        Properties paths = loadProperties(builderProperties);
         gameConfig = resolveConfiguredPath(builderDirectory, requiredProperty(paths, "server.config.path"));
         clientDataFile = resolveConfiguredPath(builderDirectory, requiredProperty(paths, "client.customSpells.path"));
         clientPatchesFile = resolveConfiguredPath(builderDirectory, requiredProperty(paths, "client.spellPatches.path"));
-        clientIconDirectory = clientDataFile.getParent().resolve("clips/spells/icons/up");
+        String configuredIconDirectory = paths.getProperty("client.iconDirectory", "");
+        clientIconDirectory = configuredIconDirectory.isBlank() ? clientDataFile.getParent().resolve("clips/spells/icons/up") : resolveConfiguredPath(builderDirectory, configuredIconDirectory);
+        String configuredTemplate = paths.getProperty("icon.emptyTemplate.path", "");
+        iconEmptyTemplate = configuredTemplate.isBlank() ? clientIconDirectory.resolve("template_sort.swf") : resolveConfiguredPath(builderDirectory, configuredTemplate);
+        Path operationDirectory = resolveConfiguredPath(builderDirectory, paths.getProperty("operation.directory", "operations"));
+        operationManager = new OperationManager(operationDirectory);
+        backupRoot = resolveConfiguredPath(builderDirectory, paths.getProperty("backup.directory", "backups"));
         iconTemplateSpellId = requiredPositiveInt(paths, "template.iconSpellId");
         animationTemplateSpellId = requiredPositiveInt(paths, "template.animationSpellId");
+    }
+
+    private void showOperations(boolean resume) throws Exception {
+        List<Path> manifests = operationManager.resumable();
+        if (manifests.isEmpty()) { ui.info("Aucune opération préparée ou interrompue."); return; }
+        ui.title(resume ? "Opérations reprenables" : "État des opérations");
+        List<String> choices = new ArrayList<>();
+        for (Path manifest : manifests) {
+            gladiatrool.builder.domain.OperationManifest state = operationManager.read(manifest);
+            System.out.println(state.operationId + " · " + state.operationType + " · sort " + state.spellId + " · " + state.status);
+            if (!state.steps.isEmpty()) System.out.println("  " + state.steps);
+            choices.add(state.operationId + " · " + state.status);
+        }
+        if (resume) {
+            int selected = ui.select("Opération à reprendre", choices);
+            OperationManager.PreparedOperation operation = operationManager.load(manifests.get(selected));
+            if ("READY_FOR_CONFIRMATION".equals(operation.manifest().status) && ui.confirm("Appliquer les fichiers préparés au dépôt local ?", false)) {
+                new PreparedOperationService(operationManager).apply(operation, builderConfig.repository());
+            }
+            if (!"COMPLETED".equals(operation.manifest().status) && !"CANCELLED".equals(operation.manifest().status)
+                    && ui.confirm("Autoriser le commit, le push et les opérations distantes de cette reprise ?", false)) {
+                deliverOperation(operation, builderConfig.repository());
+            }
+        }
     }
 
     private Path resolveConfiguredPath(Path base, String configured) {
@@ -1579,6 +1847,8 @@ public final class SpellBuilderApp {
         final Map<Integer, MorphSpell> replacements = new HashMap<>();
         final List<DamageLine> normalEffects = new ArrayList<>();
         final List<DamageLine> criticalEffects = new ArrayList<>();
+        ZoneSpec normalZone = ZoneSpec.single();
+        ZoneSpec criticalZone = ZoneSpec.single();
     }
 
     private static final class MorphSpell {
@@ -1636,6 +1906,8 @@ public final class SpellBuilderApp {
         boolean lineOnly, needLos, poModifiable, ecEndsTurn, textPatched, effectsEditable = true, effectsEdited;
         final List<DamageLine> normalEffects = new ArrayList<>();
         final List<DamageLine> criticalEffects = new ArrayList<>();
+        ZoneSpec normalZone = ZoneSpec.single();
+        ZoneSpec criticalZone = ZoneSpec.single();
 
         GradeSettings copy() {
             GradeSettings copy = new GradeSettings();
@@ -1651,6 +1923,7 @@ public final class SpellBuilderApp {
             copy.effectsEditable = effectsEditable; copy.effectsEdited = effectsEdited;
             for (DamageLine effect : normalEffects) copy.normalEffects.add(effect.copy());
             for (DamageLine effect : criticalEffects) copy.criticalEffects.add(effect.copy());
+            copy.normalZone = normalZone; copy.criticalZone = criticalZone;
             return copy;
         }
 
@@ -1664,7 +1937,14 @@ public final class SpellBuilderApp {
                     iconTemplateSpellId == null ? "" : String.valueOf(iconTemplateSpellId),
                     directIconId == null ? "" : String.valueOf(directIconId), textPatched ? "1" : "0",
                     textPatched ? ClientRecord.encodeText(name) : "", textPatched ? ClientRecord.encodeText(description) : "",
-                    encodedNormalEffects, encodedCriticalEffects, clientEffectZones);
+                    encodedNormalEffects, encodedCriticalEffects, encodeZones());
+        }
+
+        private String encodeZones() {
+            StringBuilder out = new StringBuilder();
+            for (int i=0;i<normalEffects.size();i++) out.append(normalZone.code());
+            for (int i=0;i<criticalEffects.size();i++) out.append(criticalZone.code());
+            return out.toString();
         }
 
         String restoreSql() {
@@ -1708,8 +1988,8 @@ public final class SpellBuilderApp {
                     encodeText(d.name), encodeText(d.description), String.valueOf(d.paCost), String.valueOf(d.poMin), String.valueOf(d.poMax),
                     String.valueOf(d.ratioCc), String.valueOf(d.ratioEc), bool(d.lineOnly), bool(d.needLos), bool(d.poModifiable),
                     String.valueOf(classId), String.valueOf(d.maxPerTurn), String.valueOf(d.maxPerTarget), String.valueOf(d.cooldown),
-                    bool(d.ecEndsTurn), encodeEffects(d.normalEffects), encodeEffects(d.criticalEffects), String.valueOf(d.iconTemplateSpellId),
-                    "", d.directIconId == null ? "" : String.valueOf(d.directIconId), String.valueOf(clientBreedId(d))
+                     bool(d.ecEndsTurn), encodeEffects(d.normalEffects), encodeEffects(d.criticalEffects), String.valueOf(d.iconTemplateSpellId),
+                     d.normalZone.code(), String.valueOf(d.id), String.valueOf(clientBreedId(d))
             );
         }
         private static int clientBreedId(SpellDraft d) {
