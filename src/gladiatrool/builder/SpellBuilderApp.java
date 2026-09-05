@@ -20,12 +20,17 @@ import java.io.Console;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.FileVisitResult;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.sql.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public final class SpellBuilderApp {
@@ -1564,52 +1569,108 @@ public final class SpellBuilderApp {
     }
 
     private int findNextCustomId(Connection c) throws SQLException {
+        ui.info("Recherche d'un ID libre (contrôle SQL, JSON, SWF et sources)...");
+        Set<Integer> usedRepositoryIds = repositoryCustomIds(builderConfig == null ? null : builderConfig.repository());
+        Set<Integer> usedIds = new HashSet<>(usedRepositoryIds);
+        loadDatabaseIds(c, usedIds);
+        loadJsonIds(usedIds);
+        loadIconIds(usedIds);
         for (int id = CUSTOM_ID_MIN; id <= CUSTOM_ID_MAX; id++) {
-            if (isIdFree(c, id)) return id;
+            if (!usedIds.contains(id)) {
+                ui.success("ID libre réservé localement : " + id);
+                return id;
+            }
         }
         throw new IllegalStateException("La plage 10000–10999 est complète.");
     }
 
-    private boolean isIdFree(Connection c, int id) throws SQLException {
+    private void loadDatabaseIds(Connection c, Set<Integer> usedIds) throws SQLException {
         for (String query : List.of(
-                "SELECT 1 FROM `spells` WHERE `id`=? LIMIT 1",
-                "SELECT 1 FROM `spells_grade` WHERE `spellID`=? LIMIT 1",
-                "SELECT 1 FROM `spells_effect` WHERE `spellID`=? LIMIT 1")) {
-            try (PreparedStatement ps = c.prepareStatement(query)) {
-                ps.setInt(1, id);
-                try (ResultSet rs = ps.executeQuery()) { if (rs.next()) return false; }
+                "SELECT `id` FROM `spells` WHERE `id` BETWEEN 10000 AND 10999",
+                "SELECT DISTINCT `spellID` FROM `spells_grade` WHERE `spellID` BETWEEN 10000 AND 10999",
+                "SELECT DISTINCT `spellID` FROM `spells_effect` WHERE `spellID` BETWEEN 10000 AND 10999")) {
+            try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery(query)) {
+                while (rs.next()) usedIds.add(rs.getInt(1));
             }
         }
         for (String table : List.of("full_morphs", "gladiatrool_spells")) {
-            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM `" + table + "` WHERE `spells` LIKE ? LIMIT 1")) {
-                ps.setString(1, "%" + id + ";%");
-                try (ResultSet rs = ps.executeQuery()) { if (rs.next()) return false; }
+            try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery("SELECT `spells` FROM `" + table + "`")) {
+                while (rs.next()) addSerializedSpellIds(rs.getString(1), usedIds);
             }
         }
-        if (clientIconDirectory != null && Files.exists(clientIconDirectory.resolve(id + ".swf"))) return false;
-        for (Path jsonFile : List.of(clientDataFile, clientPatchesFile)) {
-            try {
-                if (jsonFile != null && Files.isRegularFile(jsonFile) && Files.size(jsonFile) > 0) {
-                    if (json.readTree(jsonFile.toFile()).has(String.valueOf(id))) return false;
-                }
-            } catch (IOException invalidJson) { throw new IllegalStateException("JSON client invalide : " + jsonFile, invalidJson); }
-        }
-        if (builderConfig != null && repositoryContainsId(builderConfig.repository(), id)) return false;
-        return true;
     }
 
-    private boolean repositoryContainsId(Path repository, int id) {
-        if (repository == null || !Files.isDirectory(repository)) return false;
-        String token = String.valueOf(id);
-        try (java.util.stream.Stream<Path> stream = Files.walk(repository)) {
-            return stream.filter(Files::isRegularFile)
-                    .filter(p -> !p.toString().contains("\\.git\\") && !p.toString().contains("\\target\\") && !p.toString().contains("\\build\\") && !p.toString().contains("\\backups\\"))
-                    .filter(p -> p.toString().endsWith(".java") || p.toString().endsWith(".sql") || p.toString().endsWith(".json"))
-                    .anyMatch(p -> {
-                        try { return Files.readString(p).matches("(?s).*\\b" + token + "\\b.*"); }
-                        catch (IOException ignored) { return false; }
-                    });
-        } catch (IOException e) { throw new IllegalStateException("Analyse du dépôt impossible.", e); }
+    private void loadJsonIds(Set<Integer> usedIds) {
+        for (Path jsonFile : List.of(clientDataFile, clientPatchesFile, registryFile)) {
+            try {
+                if (jsonFile != null && Files.isRegularFile(jsonFile) && Files.size(jsonFile) > 0) {
+                    Iterator<String> names = json.readTree(jsonFile.toFile()).fieldNames();
+                    while (names.hasNext()) addCustomId(names.next(), usedIds);
+                }
+            } catch (IOException invalidJson) {
+                throw new IllegalStateException("JSON client invalide : " + jsonFile, invalidJson);
+            }
+        }
+    }
+
+    private void loadIconIds(Set<Integer> usedIds) throws SQLException {
+        if (clientIconDirectory == null || !Files.isDirectory(clientIconDirectory)) return;
+        try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(clientIconDirectory, "*.swf")) {
+            for (Path file : files) {
+                String name = file.getFileName().toString();
+                addCustomId(name.substring(0, name.length() - 4), usedIds);
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("Analyse des icônes impossible : " + clientIconDirectory, e);
+        }
+    }
+
+    private void addSerializedSpellIds(String serialized, Set<Integer> usedIds) {
+        if (serialized == null || serialized.isBlank()) return;
+        for (String entry : serialized.split(",")) {
+            String[] parts = entry.split(";", 2);
+            if (parts.length > 0) addCustomId(parts[0], usedIds);
+        }
+    }
+
+    private void addCustomId(String value, Set<Integer> usedIds) {
+        try {
+            int id = Integer.parseInt(value.trim());
+            if (id >= CUSTOM_ID_MIN && id <= CUSTOM_ID_MAX) usedIds.add(id);
+        } catch (NumberFormatException ignored) {
+        }
+    }
+
+    private Set<Integer> repositoryCustomIds(Path repository) {
+        Set<Integer> ids = new HashSet<>();
+        if (repository == null || !Files.isDirectory(repository)) return ids;
+        Pattern pattern = Pattern.compile("(?<!\\d)(10\\d{3})(?!\\d)");
+        try {
+            Files.walkFileTree(repository, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    String name = dir.getFileName() == null ? "" : dir.getFileName().toString().toLowerCase(Locale.ROOT);
+                    return Set.of(".git", "target", "build", "node_modules", "operations", "backups").contains(name)
+                            ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
+                    if (!(name.endsWith(".java") || name.endsWith(".sql") || name.endsWith(".json"))) return FileVisitResult.CONTINUE;
+                    try {
+                        Matcher matcher = pattern.matcher(Files.readString(file));
+                        while (matcher.find()) addCustomId(matcher.group(1), ids);
+                    } catch (IOException e) {
+                        throw new IllegalStateException("Analyse du dépôt impossible : " + file, e);
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException e) {
+            throw new IllegalStateException("Analyse du dépôt impossible.", e);
+        }
+        return ids;
     }
 
     private AnimationTemplate loadAnimationTemplate(Connection c) throws SQLException {
