@@ -16,5 +16,14 @@
     "morphIds" : [ 105 ],
     "morphReplacements" : { },
     "layoutReplacements" : { }
+  },
+  "10025" : {
+    "id" : 10025,
+    "name" : "Test builder V2",
+    "global" : false,
+    "replacementMetadataAvailable" : true,
+    "morphIds" : [ 108 ],
+    "morphReplacements" : { },
+    "layoutReplacements" : { }
   }
 }
