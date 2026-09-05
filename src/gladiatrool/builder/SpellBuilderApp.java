@@ -1434,7 +1434,7 @@ public final class SpellBuilderApp {
         StringBuilder restoreLinks = new StringBuilder();
         for (Map.Entry<Integer,String> entry : snapshot.fullMorphValues.entrySet()) restoreLinks.append("UPDATE `full_morphs` SET `spells`='").append(sqlEscape(removeAndRestoreLink(entry.getValue(), record.id, record.morphReplacements.get(entry.getKey())))).append("' WHERE `id`=").append(entry.getKey()).append(";\n");
         for (SavedLayout layout : snapshot.savedLayouts) restoreLinks.append("UPDATE `gladiatrool_spells` SET `spells`='").append(sqlEscape(removeAndRestoreLink(layout.spells, record.id, record.layoutReplacements.get(layout.id)))).append("' WHERE `id`=").append(layout.id).append(";\n");
-        return new MigrationGenerator().deleteSpell(record.id, restoreLinks.toString());
+        return new MigrationGenerator().deleteSpell(record.id, restoreLinks.toString(), record.morphIds);
     }
 
     private boolean isDedicatedIcon(int spellId) throws IOException {

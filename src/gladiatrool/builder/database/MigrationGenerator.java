@@ -2,6 +2,7 @@ package gladiatrool.builder.database;
 
 import gladiatrool.builder.domain.DamageLine;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 
 /** Generateur SQL deterministe pour les tables Game utilisees par Gladiatrool. */
@@ -36,7 +37,19 @@ public final class MigrationGenerator {
         return sql.toString();
     }
 
-    public String deleteSpell(int id, String restoreSql) { return "-- Migration Gladiatrool: suppression " + id + "\nDELETE FROM `spells_effect` WHERE `spellID`=" + id + ";\nDELETE FROM `spells_grade` WHERE `spellID`=" + id + ";\nDELETE FROM `spells` WHERE `id`=" + id + ";\n" + (restoreSql == null ? "" : restoreSql); }
+    public String deleteSpell(int id, String restoreSql, List<Integer> morphIds) {
+        StringBuilder sql = new StringBuilder("-- Migration Gladiatrool: suppression ").append(id).append("\n");
+        sql.append("DELETE FROM `spells_effect` WHERE `spellID`=").append(id).append(";\n");
+        sql.append("DELETE FROM `spells_grade` WHERE `spellID`=").append(id).append(";\n");
+        sql.append("DELETE FROM `spells` WHERE `id`=").append(id).append(";\n");
+        sql.append(restoreSql == null ? "" : restoreSql);
+        for (Integer morphId : new LinkedHashSet<>(morphIds == null ? List.of() : morphIds)) {
+            sql.append("UPDATE `gladiatrool_spells` SET `spells`=TRIM(BOTH ',' FROM REGEXP_REPLACE(COALESCE(`spells`,''), '(^|,)")
+                    .append(id).append(";[0-9]+;[^,]+', '')) WHERE `fullMorphId`=").append(morphId)
+                    .append(" AND `spells` REGEXP '(^|,)").append(id).append(";[0-9]+;[^,]+';\n");
+        }
+        return sql.toString();
+    }
 
     private void effect(StringBuilder sql, int id, DamageLine e, boolean critical, int target, String area) {
         sql.append("INSERT INTO `spells_effect` (`spellID`,`gradeID`,`effectID`,`min`,`max`,`args`,`area`,`chance`,`turn`,`isCCeffect`,`jet`,`effectTarget`,`trigger`,`onHitTrigger`) VALUES (")
