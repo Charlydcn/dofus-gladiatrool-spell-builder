@@ -1646,29 +1646,33 @@ public final class SpellBuilderApp {
         if (repository == null || !Files.isDirectory(repository)) return ids;
         Pattern pattern = Pattern.compile("(?<!\\d)(10\\d{3})(?!\\d)");
         try {
-            Files.walkFileTree(repository, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                    String name = dir.getFileName() == null ? "" : dir.getFileName().toString().toLowerCase(Locale.ROOT);
-                    return Set.of(".git", "target", "build", "node_modules", "operations", "backups", "__macosx", "kit", "dump", "dumps").contains(name)
-                            ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
-                    if (!(name.endsWith(".java") || name.endsWith(".sql") || name.endsWith(".json"))) return FileVisitResult.CONTINUE;
-                    try {
-                        // La recherche porte uniquement sur des nombres ASCII. Une lecture
-                        // ISO-8859-1 evite de bloquer sur les anciens dumps SQL non UTF-8.
-                        Matcher matcher = pattern.matcher(new String(Files.readAllBytes(file), StandardCharsets.ISO_8859_1));
-                        while (matcher.find()) addCustomId(matcher.group(1), ids);
-                    } catch (IOException e) {
-                        throw new IllegalStateException("Analyse du dépôt impossible : " + file, e);
+            for (String relativeRoot : List.of("serveur/game/src", "serveur/game/sql", "serveur/login/src", "serveur/login/sql")) {
+                Path scanRoot = repository.resolve(relativeRoot);
+                if (!Files.isDirectory(scanRoot)) continue;
+                Files.walkFileTree(scanRoot, new SimpleFileVisitor<>() {
+                    @Override
+                    public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                        String name = dir.getFileName() == null ? "" : dir.getFileName().toString().toLowerCase(Locale.ROOT);
+                        return Set.of(".git", "target", "build", "node_modules", "operations", "backups", "__macosx", "kit", "dump", "dumps").contains(name)
+                                ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
                     }
-                    return FileVisitResult.CONTINUE;
-                }
-            });
+
+                    @Override
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                        String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
+                        if (!(name.endsWith(".java") || name.endsWith(".sql"))) return FileVisitResult.CONTINUE;
+                        try {
+                            // La recherche porte uniquement sur des nombres ASCII. Une lecture
+                            // ISO-8859-1 evite de bloquer sur les anciens fichiers non UTF-8.
+                            Matcher matcher = pattern.matcher(new String(Files.readAllBytes(file), StandardCharsets.ISO_8859_1));
+                            while (matcher.find()) addCustomId(matcher.group(1), ids);
+                        } catch (IOException e) {
+                            throw new IllegalStateException("Analyse du dépôt impossible : " + file, e);
+                        }
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
+            }
         } catch (IOException e) {
             throw new IllegalStateException("Analyse du dépôt impossible.", e);
         }
