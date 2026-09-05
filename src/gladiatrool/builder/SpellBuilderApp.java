@@ -1119,7 +1119,11 @@ public final class SpellBuilderApp {
             try (ResultSet rs = ps.executeQuery()) { while (rs.next()) gradeSix.add(rs.getInt(1)); }
         }
         List<Integer> allMorphs = Arrays.stream(GLADIATROOL_MORPHS).boxed().collect(Collectors.toList());
-        return spells.values().stream().filter(s -> gradeSix.contains(s.id)).peek(s -> s.global = s.morphIds.containsAll(allMorphs)).collect(Collectors.toList());
+        return spells.values().stream()
+                .filter(s -> s.id >= CUSTOM_ID_MIN && s.id <= CUSTOM_ID_MAX)
+                .filter(s -> gradeSix.contains(s.id))
+                .peek(s -> s.global = s.morphIds.containsAll(allMorphs))
+                .collect(Collectors.toList());
     }
 
     private GradeSettings loadGradeSettings(Connection connection, int spellId) throws SQLException {
