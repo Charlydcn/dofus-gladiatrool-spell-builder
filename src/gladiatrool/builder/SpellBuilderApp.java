@@ -371,6 +371,11 @@ public final class SpellBuilderApp {
                 MorphSpell personalReplacement = expected == null ? null : personal.stream().filter(s -> s.id == expected.id || s.position == expected.position).findFirst().orElse(null);
                 layouts.append("UPDATE `gladiatrool_spells` SET `spells`='").append(sqlEscape(applyLink(personal, draft.id, personalReplacement))).append("' WHERE `id`=").append(layout.id).append(";\n");
             }
+            if (expected == null) {
+                layouts.append("UPDATE `gladiatrool_spells` SET `spells`=CASE WHEN `spells` IS NULL OR `spells`='' THEN '")
+                        .append(draft.id).append(";6;_' ELSE CONCAT(`spells`, ',").append(draft.id).append(";6;_') END WHERE `fullMorphId`=")
+                        .append(morphId).append(" AND (`spells` IS NULL OR `spells` NOT LIKE '%").append(draft.id).append(";6;%');\n");
+            }
         }
         return new MigrationGenerator().createSpell(draft.id, draft.name, animation.sprite, animation.spriteInfo, draft.paCost, draft.poMin, draft.poMax,
                 draft.ratioCc, draft.ratioEc, draft.lineOnly, draft.needLos, draft.poModifiable, draft.maxPerTurn, draft.maxPerTarget,
