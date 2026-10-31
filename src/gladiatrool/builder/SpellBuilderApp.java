@@ -221,8 +221,8 @@ public final class SpellBuilderApp {
         ui.title("Générateur de sorts Gladiatrool");
         String environment = builderConfig.value("server.environment", "INCONNU");
         ui.info("Environnement déclaré : " + environment);
-        if (!"DEV_LOCAL".equalsIgnoreCase(environment)) {
-            throw new IllegalStateException("Le Spell Builder doit être configuré sur DEV_LOCAL avant toute écriture locale.");
+        if (!"DEV".equalsIgnoreCase(environment)) {
+            throw new IllegalStateException("Le Spell Builder doit être configuré sur DEV avant toute écriture locale.");
         }
         ui.info("Grade 6 uniquement · IDs 10000–10999 · dégâts directs et vol de vie");
             int mode = ui.select("Action", List.of(
@@ -319,8 +319,8 @@ public final class SpellBuilderApp {
             operation.manifest().steps.put("iconeGraphique", copiedHash.equals(editedHash) ? "INCHANGE_CONFIRME" : "MODIFIE");
             operationManager.save(operation);
         }
-        ui.success("DEV_LOCAL : migration appliquée · Source : OK · JSON : OK · SWF : OK");
-        ui.info("Redémarrez le Game DEV_LOCAL avant le test en jeu.");
+        ui.success("DEV : migration appliquée · Source : OK · JSON : OK · SWF : OK");
+        ui.info("Redémarrez le Game DEV avant le test en jeu.");
         if (ui.confirm("Autoriser le commit, le push, la migration serveur et la publication client ?", false)) {
             deliverOperation(operation, repository);
         } else {
@@ -348,28 +348,28 @@ public final class SpellBuilderApp {
             ui.info("Push registre builder : " + operation.manifest().steps.getOrDefault("registrePush", "NON"));
         }
         ui.info("Migration serveur : " + (result.migration == null ? operation.manifest().steps.getOrDefault("migrationServeur", "NON EXECUTÉE") : result.migration.success ? "OK" : "ÉCHEC"));
-        ui.info("Migration DEV_LOCAL : " + operation.manifest().steps.getOrDefault("migrationDevLocal", "NON EXECUTÉE"));
-        ui.info("Redémarrage Game DEV_LOCAL : " + operation.manifest().steps.getOrDefault("redemarrageDevLocal", "A_FAIRE"));
+        ui.info("Migration DEV : " + operation.manifest().steps.getOrDefault("migrationDevLocal", "NON EXECUTÉE"));
+        ui.info("Redémarrage Game DEV : " + operation.manifest().steps.getOrDefault("redemarrageDevLocal", "A_FAIRE"));
         ui.info("Publication client : " + (result.publication == null ? (operation.manifest().clientPublication ? operation.manifest().steps.getOrDefault("publicationClient", "NON EXECUTÉE") : "non prévue") : result.publication.success ? "OK" : "ÉCHEC"));
         ui.info("Test en jeu : NON VALIDÉ");
     }
 
     private void applyLocalMigration(Path repository, String migrationName) throws Exception {
         String environment = builderConfig.value("server.environment", "INCONNU");
-        if (!"DEV_LOCAL".equalsIgnoreCase(environment)) {
-            throw new IllegalStateException("Migration locale refusée hors de DEV_LOCAL.");
+        if (!"DEV".equalsIgnoreCase(environment)) {
+            throw new IllegalStateException("Migration locale refusée hors de DEV.");
         }
         Path script = repository.resolve("outils/dev-environment/migrate-dev.ps1").toAbsolutePath().normalize();
         if (!Files.isRegularFile(script)) {
-            throw new IllegalStateException("Script de migration DEV_LOCAL introuvable : " + script);
+            throw new IllegalStateException("Script de migration DEV introuvable : " + script);
         }
         List<String> command = List.of("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script.toString(),
                 "-Migration", migrationName, "-ConfigPath", gameConfig.toAbsolutePath().normalize().toString(), "-AllowLocalWrite");
-        ui.info("Application de la migration à DEV_LOCAL...");
+        ui.info("Application de la migration à DEV...");
         Process process = new ProcessBuilder(command).inheritIO().start();
         int exitCode = process.waitFor();
         if (exitCode != 0) {
-            throw new IllegalStateException("Migration DEV_LOCAL échouée (code " + exitCode + ").");
+            throw new IllegalStateException("Migration DEV échouée (code " + exitCode + ").");
         }
     }
 
@@ -1321,8 +1321,8 @@ public final class SpellBuilderApp {
         operationManager.save(operation);
         if (clientChanged) new ClientValidator().validateJson(clientPatchesFile);
         if (files.containsKey(clientIconDirectory.resolve(edited.spellId + ".swf"))) new ClientValidator().validateSwf(clientIconDirectory.resolve(edited.spellId + ".swf"));
-        ui.success("DEV_LOCAL : migration appliquée · Source : OK · JSON : " + (clientChanged ? "OK" : "non modifié"));
-        ui.info("Redémarrez le Game DEV_LOCAL avant le test en jeu.");
+        ui.success("DEV : migration appliquée · Source : OK · JSON : " + (clientChanged ? "OK" : "non modifié"));
+        ui.info("Redémarrez le Game DEV avant le test en jeu.");
         if (ui.confirm("Autoriser le commit, le push et la migration serveur" + (clientChanged ? " avec publication client" : "") + " ?", false)) deliverOperation(operation, repository);
         else ui.info("Opération conservée pour reprise : " + operation.directory());
     }
@@ -1466,7 +1466,7 @@ public final class SpellBuilderApp {
         operation.manifest().steps.put("redemarrageDevLocal", "A_FAIRE");
         operationManager.save(operation);
         new ClientValidator().validateJson(clientDataFile); new ClientValidator().validateJson(clientPatchesFile);
-        ui.info("Redémarrez le Game DEV_LOCAL avant le test en jeu.");
+        ui.info("Redémarrez le Game DEV avant le test en jeu.");
         if (ui.confirm("Autoriser le commit, le push, la migration serveur et la publication client ?", false)) deliverOperation(operation, builderConfig.repository());
         else ui.info("Opération conservée pour reprise : " + operation.directory());
     }
@@ -1860,7 +1860,7 @@ public final class SpellBuilderApp {
                     operation.manifest().steps.put("migrationDevLocal", "OK");
                     operation.manifest().steps.put("redemarrageDevLocal", "A_FAIRE");
                     operationManager.save(operation);
-                    ui.info("Redémarrez le Game DEV_LOCAL avant le test en jeu.");
+                    ui.info("Redémarrez le Game DEV avant le test en jeu.");
                 }
             }
             if (!"COMPLETED".equals(operation.manifest().status) && !"CANCELLED".equals(operation.manifest().status)

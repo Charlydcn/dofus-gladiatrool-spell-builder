@@ -10,9 +10,9 @@ Les sélections courtes utilisent les flèches `↑` / `↓` et `Entrée`. Les v
 
 Le projet cible la structure SQL de l'émulateur Aegnor. Une adaptation peut être nécessaire pour les forks ayant renommé les tables, les colonnes ou les clés de `config.properties`.
 
-Le Builder travaille dans l’environnement `DEV_LOCAL` lorsque
+Le Builder travaille dans l’environnement `DEV` lorsque
 `server.config.path` pointe vers le serveur du dépôt. Il ne faut pas confondre
-cette base avec `PROD_AEGNOR`, qui peut également utiliser `127.0.0.1` sur le PC
+cette base avec `PROD`, qui peut également utiliser `127.0.0.1` sur le PC
 principal. Le Builder doit afficher l’environnement et la base ciblée avant
 toute confirmation d’écriture.
 
@@ -228,9 +228,9 @@ Une ancienne sauvegarde ne doit pas être restaurée aveuglément après plusieu
 4. Vérifier les caractéristiques et le comportement du sort.
 5. Placer manuellement un nouveau sort dans un raccourci si nécessaire.
 
-Une opération locale ne modifie que `DEV_LOCAL` et les fichiers de travail. Une
+Une opération locale ne modifie que `DEV` et les fichiers de travail. Une
 opération distante reste une étape distincte ; la présence de la migration dans
-Git ne signifie pas qu’elle a été appliquée à `PROD_AEGNOR`.
+Git ne signifie pas qu’elle a été appliquée à `PROD`.
 
 ## Pipeline d'opération
 

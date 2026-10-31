@@ -16,7 +16,7 @@ server.migrationWorkflow=aegnor-control.yml
 client.publishWorkflow=publish-client.yml
 client.releaseVersion=2026.09.05.2
 server.workflowRepository=Charlydcn/PROJET-DOFUS-RETRO
-server.environment=DEV_LOCAL
+server.environment=DEV
 operation.directory=operations
 backup.directory=backups
 
